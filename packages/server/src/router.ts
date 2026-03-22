@@ -28,6 +28,8 @@ export interface Router {
   getPluginsForChannel(channelName: string): ConnectedPlugin[];
   /** Get a specific plugin by shortId */
   getPluginByShortId(shortId: string): ConnectedPlugin | undefined;
+  /** Get a specific plugin by WebSocket reference */
+  getPluginByWs(ws: WebSocket): ConnectedPlugin | undefined;
   /** Get channel name for a project path, creating mapping if needed */
   resolveChannel(projectPath: string): string;
   /** Get Discord channel ID for a channel name */
@@ -103,6 +105,9 @@ export function createRouter(
     },
     getPluginByShortId(shortId) {
       return Array.from(plugins.values()).find((p) => p.shortId === shortId);
+    },
+    getPluginByWs(ws) {
+      return plugins.get(ws);
     },
     resolveChannel,
     getDiscordChannelId,

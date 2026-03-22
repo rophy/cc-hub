@@ -4,6 +4,7 @@ import { createWebSocketServer } from "./ws-server.js";
 import { createDiscordBot } from "./discord-bot.js";
 import { createRouter } from "./router.js";
 import { loadState, saveState } from "./state.js";
+import { parseTargetPrefix } from "./message-utils.js";
 
 const WS_PORT = parseInt(process.env.CC_HUB_WS_PORT || "3000", 10);
 const DISCORD_TOKEN = process.env.DISCORD_TOKEN;
@@ -17,11 +18,28 @@ async function main() {
   const state = loadState();
   const router = createRouter(state, saveState);
 
-  const wsServer = createWebSocketServer(WS_PORT, router);
-  console.log(`WebSocket server listening on port ${WS_PORT}`);
-
-  const discord = await createDiscordBot(DISCORD_TOKEN!, router);
+  // Discord bot — handles user messages from Discord
+  const discord = await createDiscordBot(DISCORD_TOKEN!, router, {
+    onUserMessage(channelName, from, text, messageId) {
+      const [targetShortId, message] = parseTargetPrefix(text);
+      wsServer.sendToChannel(channelName, from, message, messageId, targetShortId);
+    },
+  });
   console.log("Discord bot connected");
+
+  // WebSocket server — handles cc-plugin and node-agent connections
+  const wsServer = createWebSocketServer(WS_PORT, router, {
+    onCcReply(shortId, channelName, text, _files) {
+      discord.sendReply(channelName, shortId, text);
+    },
+    onPluginConnected(shortId, channelName) {
+      discord.postStatus(channelName, `[${shortId}] session connected`);
+    },
+    onPluginDisconnected(shortId, channelName) {
+      discord.postStatus(channelName, `[${shortId}] session ended`);
+    },
+  });
+  console.log(`WebSocket server listening on port ${WS_PORT}`);
 
   process.on("SIGINT", () => {
     console.log("Shutting down...");

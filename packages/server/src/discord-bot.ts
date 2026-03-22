@@ -9,17 +9,28 @@ import type { Router } from "./router.js";
 
 const MAX_MESSAGE_LENGTH = 2000;
 
+export interface DiscordBotEvents {
+  /** Called when a user sends a message in a mapped channel */
+  onUserMessage(
+    channelName: string,
+    from: string,
+    text: string,
+    messageId: string,
+  ): void;
+}
+
 export interface DiscordBotHandle {
   destroy(): void;
-  /** Send a message to a Discord channel by channel name */
-  sendToChannel(channelName: string, text: string): Promise<void>;
-  /** Post a status message (e.g., session ended) */
+  /** Send a message to a Discord channel, prefixed with session short ID */
+  sendReply(channelName: string, shortId: string, text: string): Promise<void>;
+  /** Post a status message (e.g., session connected/ended) */
   postStatus(channelName: string, text: string): Promise<void>;
 }
 
 export async function createDiscordBot(
   token: string,
   router: Router,
+  events: DiscordBotEvents,
 ): Promise<DiscordBotHandle> {
   const client = new Client({
     intents: [
@@ -29,27 +40,25 @@ export async function createDiscordBot(
     ],
   });
 
-  let onUserMessage:
-    | ((channelName: string, from: string, text: string, messageId: string) => void)
-    | undefined;
-
   client.on("messageCreate", (message: Message) => {
     if (message.author.bot) return;
     if (message.channel.type !== ChannelType.GuildText) return;
 
     const channel = message.channel as TextChannel;
-    // Find if this channel is mapped
     const channelName = channel.name;
+
+    // Only handle messages in mapped channels
     const discordId = router.getDiscordChannelId(channelName);
     if (!discordId) return;
 
     const from = message.author.displayName || message.author.username;
-    onUserMessage?.(channelName, from, message.content, message.id);
+    events.onUserMessage(channelName, from, message.content, message.id);
   });
 
   await client.login(token);
 
   async function findOrCreateChannel(channelName: string): Promise<TextChannel | null> {
+    // Check if we already have a mapped channel ID
     const existingId = router.getDiscordChannelId(channelName);
     if (existingId) {
       const ch = await client.channels.fetch(existingId).catch(() => null);
@@ -83,11 +92,12 @@ export async function createDiscordBot(
       client.destroy();
     },
 
-    async sendToChannel(channelName, text) {
+    async sendReply(channelName, shortId, text) {
       const channel = await findOrCreateChannel(channelName);
       if (!channel) return;
 
-      const chunks = chunkMessage(text);
+      const prefixed = `**[${shortId}]** ${text}`;
+      const chunks = chunkMessage(prefixed);
       for (const chunk of chunks) {
         await channel.send(chunk);
       }
@@ -117,7 +127,6 @@ export function chunkMessage(text: string): string[] {
     // Try to split at a newline before the limit
     let splitAt = remaining.lastIndexOf("\n", MAX_MESSAGE_LENGTH);
     if (splitAt <= 0) {
-      // No good newline — split at limit
       splitAt = MAX_MESSAGE_LENGTH;
     }
 
