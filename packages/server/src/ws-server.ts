@@ -20,8 +20,6 @@ export interface WsServerEvents {
   onPluginConnected(shortId: string, channelName: string): void;
   /** Called when a cc-plugin disconnects */
   onPluginDisconnected(shortId: string, channelName: string): void;
-  /** Called when a client needs pairing — returns the pairing code */
-  onPairingNeeded(code: string, clientType: string, hostname?: string): void;
 }
 
 export interface WsServerHandle {
@@ -97,8 +95,6 @@ export function createWebSocketServer(
       if (!params.token || !auth.validateToken(params.token)) {
         // Start pairing flow
         const { code, tokenPromise } = auth.startPairing();
-        events.onPairingNeeded(code, params.clientType, params.hostname);
-
         // Send pairing code to client
         ws.send(
           JSON.stringify(

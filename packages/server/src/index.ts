@@ -40,9 +40,6 @@ async function main() {
     onPluginDisconnected(shortId, channelName) {
       discord.postStatus(channelName, `[${shortId}] session ended`);
     },
-    onPairingNeeded(code, clientType, hostname) {
-      discord.notifyPairing(code, clientType, hostname);
-    },
   });
   console.log(`WebSocket server listening on port ${WS_PORT}`);
 

@@ -40,7 +40,6 @@ describe("WebSocket relay", () => {
   let replyLog: { shortId: string; channelName: string; text: string }[];
   let connectLog: { shortId: string; channelName: string }[];
   let disconnectLog: { shortId: string; channelName: string }[];
-  let pairingLog: { code: string; clientType: string }[];
 
   beforeEach(async () => {
     state = { channels: [], machines: [] };
@@ -49,7 +48,6 @@ describe("WebSocket relay", () => {
     replyLog = [];
     connectLog = [];
     disconnectLog = [];
-    pairingLog = [];
 
     // Pre-generate a valid token for tests
     testToken = auth.generateToken();
@@ -64,9 +62,6 @@ describe("WebSocket relay", () => {
       },
       onPluginDisconnected(shortId, channelName) {
         disconnectLog.push({ shortId, channelName });
-      },
-      onPairingNeeded(code, clientType) {
-        pairingLog.push({ code, clientType });
       },
     });
   });
@@ -112,7 +107,6 @@ describe("WebSocket relay", () => {
     const response = (await msgPromise) as { result?: { needsPairing: boolean; pairingCode: string } };
     expect(response.result?.needsPairing).toBe(true);
     expect(response.result?.pairingCode).toMatch(/^[0-9A-F]{4}$/);
-    expect(pairingLog).toHaveLength(1);
 
     ws.close();
   });

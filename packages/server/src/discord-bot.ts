@@ -26,8 +26,6 @@ export interface DiscordBotHandle {
   sendReply(channelName: string, shortId: string, text: string): Promise<void>;
   /** Post a status message (e.g., session connected/ended) */
   postStatus(channelName: string, text: string): Promise<void>;
-  /** Send a DM or channel message about pairing */
-  notifyPairing(code: string, clientType: string, hostname?: string): void;
 }
 
 export async function createDiscordBot(
@@ -41,41 +39,37 @@ export async function createDiscordBot(
       GatewayIntentBits.Guilds,
       GatewayIntentBits.GuildMessages,
       GatewayIntentBits.MessageContent,
+      GatewayIntentBits.DirectMessages,
     ],
+    partials: [2], // Partials.Channel — needed to receive DMs
   });
 
   client.on("messageCreate", (message: Message) => {
     if (message.author.bot) return;
+
+    const text = message.content.trim();
+
+    // Handle DMs — pairing commands only
+    if (message.channel.type === ChannelType.DM) {
+      const pairMatch = text.match(/^!pair\s+([A-Fa-f0-9]{4})$/i);
+      if (pairMatch) {
+        const code = pairMatch[1].toUpperCase();
+        const result = auth.confirmPairing(code, undefined);
+        if (result) {
+          message.reply("Pairing confirmed. Token has been sent to the client.");
+        } else {
+          message.reply(`Unknown or expired pairing code: ${code}`);
+        }
+      } else {
+        message.reply("Send `!pair <code>` to pair a cc-hub client.");
+      }
+      return;
+    }
+
+    // Guild text channels — message routing only
     if (message.channel.type !== ChannelType.GuildText) return;
 
     const channel = message.channel as TextChannel;
-    const text = message.content.trim();
-
-    // Handle !pair <code> command in any channel
-    const pairMatch = text.match(/^!pair\s+([A-Fa-f0-9]{4})$/);
-    if (pairMatch) {
-      const code = pairMatch[1].toUpperCase();
-      const result = auth.confirmPairing(code, undefined);
-      if (result) {
-        message.reply(`Pairing confirmed. Token has been sent to the client.`);
-      } else {
-        message.reply(`Unknown or expired pairing code: ${code}`);
-      }
-      return;
-    }
-
-    // Handle !sessions command — list pending pairings
-    if (text === "!sessions") {
-      const codes = auth.getPendingCodes();
-      if (codes.length === 0) {
-        message.reply("No pending pairings.");
-      } else {
-        message.reply(`Pending pairings: ${codes.join(", ")}`);
-      }
-      return;
-    }
-
-    // Regular message routing — only in mapped channels
     const channelName = channel.name;
     const discordId = router.getDiscordChannelId(channelName);
     if (!discordId) return;
@@ -135,20 +129,6 @@ export async function createDiscordBot(
       await channel.send(`*${text}*`);
     },
 
-    notifyPairing(code, clientType, hostname) {
-      // Post to the first text channel in the guild
-      const guild = client.guilds.cache.first();
-      if (!guild) return;
-      const channel = guild.channels.cache.find(
-        (c) => c.type === ChannelType.GuildText,
-      ) as TextChannel | undefined;
-      if (!channel) return;
-
-      const source = hostname ? `${clientType} from ${hostname}` : clientType;
-      channel.send(
-        `*New pairing request from ${source}. Approve with:* \`!pair ${code}\``,
-      );
-    },
   };
 }
 
