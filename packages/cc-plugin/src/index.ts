@@ -6,13 +6,13 @@ import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
+import { loadClientConfig } from "@cc-hub/shared";
 import { createBridgeClient } from "./bridge-client.js";
 import { generateShortId } from "./utils.js";
 
 const shortId = generateShortId();
 const projectPath = process.cwd();
-const serverUrl = process.env.CC_HUB_SERVER_URL || "ws://localhost:3000";
-const token = process.env.CC_HUB_TOKEN || "";
+const config = loadClientConfig();
 
 // MCP Server setup
 const mcp = new Server(
@@ -61,7 +61,7 @@ mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
 
 mcp.setRequestHandler(CallToolRequestSchema, async (request) => {
   if (request.params.name === "reply") {
-    const { chat_id, text, files } = request.params.arguments as {
+    const { text, files } = request.params.arguments as {
       chat_id: string;
       text: string;
       files?: string[];
@@ -74,8 +74,8 @@ mcp.setRequestHandler(CallToolRequestSchema, async (request) => {
 
 // Bridge client setup
 const bridgeClient = createBridgeClient({
-  serverUrl,
-  token,
+  serverUrl: config.serverUrl,
+  token: config.token,
   shortId,
   projectPath,
   onMessage: async (from: string, text: string, messageId?: string) => {

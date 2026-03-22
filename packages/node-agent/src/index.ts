@@ -1,20 +1,20 @@
 #!/usr/bin/env node
 
+import { loadClientConfig } from "@cc-hub/shared";
 import { createAgentClient } from "./agent-client.js";
 import { SessionManager } from "./session-manager.js";
 import { generateShortId } from "./utils.js";
 import { hostname } from "node:os";
 
-const serverUrl = process.env.CC_HUB_SERVER_URL || "ws://localhost:3000";
-const token = process.env.CC_HUB_TOKEN || "";
+const config = loadClientConfig();
 const shortId = generateShortId();
 
 async function main() {
   const sessionManager = new SessionManager();
 
   const client = createAgentClient({
-    serverUrl,
-    token,
+    serverUrl: config.serverUrl,
+    token: config.token,
     shortId,
     hostname: hostname(),
     onStartSession: async (projectPath, prompt) => {
@@ -26,9 +26,8 @@ async function main() {
   });
 
   await client.connect();
-  console.log(`Node agent [${shortId}] connected to ${serverUrl}`);
+  console.log(`Node agent [${shortId}] connected to ${config.serverUrl}`);
 
-  // Periodic heartbeat
   setInterval(() => {
     client.sendHeartbeat(sessionManager.getActiveSessions());
   }, 30000);

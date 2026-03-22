@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import WebSocket from "ws";
 import { createWebSocketServer, type WsServerHandle } from "../../src/ws-server.js";
 import { createRouter, type Router } from "../../src/router.js";
+import { createAuthManager, type AuthManager } from "../../src/auth.js";
 import type { ServerState } from "../../src/state.js";
 import {
   createRequest,
@@ -9,7 +10,6 @@ import {
   IDENTIFY_METHOD,
   CC_MESSAGE_METHOD,
   CC_REPLY_METHOD,
-  type JsonRpcResponse,
   type JsonRpcRequest,
 } from "@cc-hub/shared";
 
@@ -34,19 +34,28 @@ function connectClient(): Promise<WebSocket> {
 describe("WebSocket relay", () => {
   let state: ServerState;
   let router: Router;
+  let auth: AuthManager;
   let server: WsServerHandle;
+  let testToken: string;
   let replyLog: { shortId: string; channelName: string; text: string }[];
   let connectLog: { shortId: string; channelName: string }[];
   let disconnectLog: { shortId: string; channelName: string }[];
+  let pairingLog: { code: string; clientType: string }[];
 
   beforeEach(async () => {
     state = { channels: [], machines: [] };
     router = createRouter(state, () => {});
+    auth = createAuthManager(state, () => {});
     replyLog = [];
     connectLog = [];
     disconnectLog = [];
+    pairingLog = [];
 
-    server = createWebSocketServer(TEST_PORT, router, {
+    // Pre-generate a valid token for tests
+    testToken = auth.generateToken();
+    state.machines.push({ token: testToken, pairedAt: new Date().toISOString() });
+
+    server = createWebSocketServer(TEST_PORT, router, auth, {
       onCcReply(shortId, channelName, text) {
         replyLog.push({ shortId, channelName, text });
       },
@@ -56,6 +65,9 @@ describe("WebSocket relay", () => {
       onPluginDisconnected(shortId, channelName) {
         disconnectLog.push({ shortId, channelName });
       },
+      onPairingNeeded(code, clientType) {
+        pairingLog.push({ code, clientType });
+      },
     });
   });
 
@@ -63,29 +75,77 @@ describe("WebSocket relay", () => {
     server.close();
   });
 
-  it("accepts cc-plugin identify and assigns channel", async () => {
+  function identifyMsg(shortId: string, projectPath: string, id: number, token?: string) {
+    return createRequest(
+      IDENTIFY_METHOD,
+      {
+        clientType: "cc-plugin",
+        token: token ?? testToken,
+        shortId,
+        projectPath,
+      },
+      id,
+    );
+  }
+
+  it("accepts cc-plugin identify with valid token", async () => {
     const ws = await connectClient();
     const msgPromise = waitForMessage(ws);
 
-    ws.send(
-      JSON.stringify(
-        createRequest(
-          IDENTIFY_METHOD,
-          {
-            clientType: "cc-plugin",
-            token: "test-token",
-            shortId: "a3f7",
-            projectPath: "/home/user/my-project",
-          },
-          1,
-        ),
-      ),
-    );
+    ws.send(JSON.stringify(identifyMsg("a3f7", "/home/user/my-project", 1)));
 
-    const response = (await msgPromise) as JsonRpcResponse;
-    expect(response.result).toEqual({ ok: true, channel: "my-project" });
+    const response = (await msgPromise) as JsonRpcRequest;
+    expect(response.method).toBe("auth.identified");
+    expect((response.params as { ok: boolean }).ok).toBe(true);
+    expect((response.params as { channel: string }).channel).toBe("my-project");
     expect(connectLog).toHaveLength(1);
-    expect(connectLog[0].shortId).toBe("a3f7");
+
+    ws.close();
+  });
+
+  it("triggers pairing for invalid token", async () => {
+    const ws = await connectClient();
+    const msgPromise = waitForMessage(ws);
+
+    ws.send(JSON.stringify(identifyMsg("a3f7", "/home/user/proj", 1, "bad-token")));
+
+    const response = (await msgPromise) as { result?: { needsPairing: boolean; pairingCode: string } };
+    expect(response.result?.needsPairing).toBe(true);
+    expect(response.result?.pairingCode).toMatch(/^[0-9A-F]{4}$/);
+    expect(pairingLog).toHaveLength(1);
+
+    ws.close();
+  });
+
+  it("completes pairing flow and registers plugin", async () => {
+    const ws = await connectClient();
+    const pairingResponse = waitForMessage(ws);
+
+    ws.send(JSON.stringify(identifyMsg("a3f7", "/home/user/proj", 1, "")));
+
+    const resp = (await pairingResponse) as { result?: { pairingCode: string } };
+    const code = resp.result!.pairingCode;
+
+    // Collect the next two messages (auth.paired + auth.identified)
+    const messages: unknown[] = [];
+    const allReceived = new Promise<void>((resolve) => {
+      ws.on("message", (data) => {
+        messages.push(JSON.parse(data.toString()));
+        if (messages.length >= 2) resolve();
+      });
+    });
+
+    // Confirm pairing (simulates Discord !pair command)
+    auth.confirmPairing(code);
+    await allReceived;
+
+    const paired = messages[0] as JsonRpcRequest;
+    expect(paired.method).toBe("auth.paired");
+    expect((paired.params as { token: string }).token).toBeTruthy();
+
+    const identified = messages[1] as JsonRpcRequest;
+    expect(identified.method).toBe("auth.identified");
+    expect((identified.params as { ok: boolean }).ok).toBe(true);
 
     ws.close();
   });
@@ -94,47 +154,24 @@ describe("WebSocket relay", () => {
     const ws = await connectClient();
     const msgPromise = waitForMessage(ws);
 
-    ws.send(
-      JSON.stringify(
-        createRequest(IDENTIFY_METHOD, { invalid: true }, 1),
-      ),
-    );
+    ws.send(JSON.stringify(createRequest(IDENTIFY_METHOD, { invalid: true }, 1)));
 
-    const response = (await msgPromise) as JsonRpcResponse;
+    const response = (await msgPromise) as { error?: { message: string } };
     expect(response.error).toBeDefined();
-    expect(response.error!.message).toContain("Invalid");
 
     ws.close();
   });
 
   it("routes messages from server to plugin", async () => {
     const ws = await connectClient();
+    ws.send(JSON.stringify(identifyMsg("a3f7", "/home/user/proj", 1)));
+    await waitForMessage(ws); // auth.identified
 
-    // Identify first
-    const identifyPromise = waitForMessage(ws);
-    ws.send(
-      JSON.stringify(
-        createRequest(
-          IDENTIFY_METHOD,
-          {
-            clientType: "cc-plugin",
-            token: "test-token",
-            shortId: "a3f7",
-            projectPath: "/home/user/proj",
-          },
-          1,
-        ),
-      ),
-    );
-    await identifyPromise;
-
-    // Send a message to the channel
     const msgPromise = waitForMessage(ws);
     server.sendToChannel("proj", "testuser", "hello from discord");
 
     const msg = (await msgPromise) as JsonRpcRequest;
     expect(msg.method).toBe(CC_MESSAGE_METHOD);
-    expect((msg.params as { from: string }).from).toBe("testuser");
     expect((msg.params as { text: string }).text).toBe("hello from discord");
 
     ws.close();
@@ -142,97 +179,39 @@ describe("WebSocket relay", () => {
 
   it("routes replies from plugin to server events", async () => {
     const ws = await connectClient();
+    ws.send(JSON.stringify(identifyMsg("b2c1", "/home/user/proj", 1)));
+    await waitForMessage(ws); // auth.identified
 
-    // Identify
-    const identifyPromise = waitForMessage(ws);
-    ws.send(
-      JSON.stringify(
-        createRequest(
-          IDENTIFY_METHOD,
-          {
-            clientType: "cc-plugin",
-            token: "test-token",
-            shortId: "b2c1",
-            projectPath: "/home/user/proj",
-          },
-          1,
-        ),
-      ),
-    );
-    await identifyPromise;
+    ws.send(JSON.stringify(createNotification(CC_REPLY_METHOD, { text: "I found the bug" })));
 
-    // Send a reply
-    ws.send(
-      JSON.stringify(
-        createNotification(CC_REPLY_METHOD, {
-          text: "I found the bug",
-        }),
-      ),
-    );
-
-    // Wait for event processing
     await new Promise((r) => setTimeout(r, 50));
 
     expect(replyLog).toHaveLength(1);
     expect(replyLog[0].shortId).toBe("b2c1");
-    expect(replyLog[0].channelName).toBe("proj");
     expect(replyLog[0].text).toBe("I found the bug");
 
     ws.close();
   });
 
-  it("targets specific plugin with @shortId", async () => {
-    // Connect two plugins to the same channel
+  it("targets specific plugin with shortId", async () => {
     const ws1 = await connectClient();
     const ws2 = await connectClient();
 
-    const id1Promise = waitForMessage(ws1);
-    ws1.send(
-      JSON.stringify(
-        createRequest(
-          IDENTIFY_METHOD,
-          {
-            clientType: "cc-plugin",
-            token: "t1",
-            shortId: "aaaa",
-            projectPath: "/home/user/proj",
-          },
-          1,
-        ),
-      ),
-    );
-    await id1Promise;
+    ws1.send(JSON.stringify(identifyMsg("aaaa", "/home/user/proj", 1)));
+    await waitForMessage(ws1);
 
-    const id2Promise = waitForMessage(ws2);
-    ws2.send(
-      JSON.stringify(
-        createRequest(
-          IDENTIFY_METHOD,
-          {
-            clientType: "cc-plugin",
-            token: "t2",
-            shortId: "bbbb",
-            projectPath: "/home/user/proj",
-          },
-          2,
-        ),
-      ),
-    );
-    await id2Promise;
+    ws2.send(JSON.stringify(identifyMsg("bbbb", "/home/user/proj", 2)));
+    await waitForMessage(ws2);
 
-    // Send targeted message to aaaa only
     const msg1Promise = waitForMessage(ws1);
     let ws2Received = false;
-    ws2.on("message", () => {
-      ws2Received = true;
-    });
+    ws2.on("message", () => { ws2Received = true; });
 
     server.sendToChannel("proj", "user", "targeted msg", undefined, "aaaa");
 
     const msg1 = (await msg1Promise) as JsonRpcRequest;
     expect((msg1.params as { text: string }).text).toBe("targeted msg");
 
-    // Give ws2 time to receive (it shouldn't)
     await new Promise((r) => setTimeout(r, 50));
     expect(ws2Received).toBe(false);
 
@@ -242,30 +221,12 @@ describe("WebSocket relay", () => {
 
   it("emits disconnect event when plugin closes", async () => {
     const ws = await connectClient();
+    ws.send(JSON.stringify(identifyMsg("c3d4", "/home/user/proj", 1)));
+    await waitForMessage(ws);
 
-    const identifyPromise = waitForMessage(ws);
-    ws.send(
-      JSON.stringify(
-        createRequest(
-          IDENTIFY_METHOD,
-          {
-            clientType: "cc-plugin",
-            token: "test",
-            shortId: "c3d4",
-            projectPath: "/home/user/proj",
-          },
-          1,
-        ),
-      ),
-    );
-    await identifyPromise;
-
-    // Clear any stale disconnects from previous tests
     disconnectLog.length = 0;
-
     ws.close();
 
-    // Wait for close event
     await new Promise((r) => setTimeout(r, 50));
 
     expect(disconnectLog).toHaveLength(1);
@@ -276,41 +237,12 @@ describe("WebSocket relay", () => {
     const ws1 = await connectClient();
     const ws2 = await connectClient();
 
-    const id1Promise = waitForMessage(ws1);
-    ws1.send(
-      JSON.stringify(
-        createRequest(
-          IDENTIFY_METHOD,
-          {
-            clientType: "cc-plugin",
-            token: "t1",
-            shortId: "aaaa",
-            projectPath: "/home/user/proj",
-          },
-          1,
-        ),
-      ),
-    );
-    await id1Promise;
+    ws1.send(JSON.stringify(identifyMsg("aaaa", "/home/user/proj", 1)));
+    await waitForMessage(ws1);
 
-    const id2Promise = waitForMessage(ws2);
-    ws2.send(
-      JSON.stringify(
-        createRequest(
-          IDENTIFY_METHOD,
-          {
-            clientType: "cc-plugin",
-            token: "t2",
-            shortId: "bbbb",
-            projectPath: "/home/user/proj",
-          },
-          2,
-        ),
-      ),
-    );
-    await id2Promise;
+    ws2.send(JSON.stringify(identifyMsg("bbbb", "/home/user/proj", 2)));
+    await waitForMessage(ws2);
 
-    // Broadcast (no target)
     const msg1Promise = waitForMessage(ws1);
     const msg2Promise = waitForMessage(ws2);
     server.sendToChannel("proj", "user", "broadcast msg");

@@ -1,0 +1,9 @@
+{
+  "name": "cc-hub",
+  "version": "0.0.1",
+  "description": "Bridge Claude Code sessions to Discord/Slack via cc-hub server",
+  "author": {
+    "name": "cc-hub"
+  },
+  "mcpServers": "./.mcp.json"
+}

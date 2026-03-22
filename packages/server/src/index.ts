@@ -3,6 +3,7 @@
 import { createWebSocketServer } from "./ws-server.js";
 import { createDiscordBot } from "./discord-bot.js";
 import { createRouter } from "./router.js";
+import { createAuthManager } from "./auth.js";
 import { loadState, saveState } from "./state.js";
 import { parseTargetPrefix } from "./message-utils.js";
 
@@ -17,9 +18,10 @@ if (!DISCORD_TOKEN) {
 async function main() {
   const state = loadState();
   const router = createRouter(state, saveState);
+  const auth = createAuthManager(state, saveState);
 
-  // Discord bot — handles user messages from Discord
-  const discord = await createDiscordBot(DISCORD_TOKEN!, router, {
+  // Discord bot
+  const discord = await createDiscordBot(DISCORD_TOKEN!, router, auth, {
     onUserMessage(channelName, from, text, messageId) {
       const [targetShortId, message] = parseTargetPrefix(text);
       wsServer.sendToChannel(channelName, from, message, messageId, targetShortId);
@@ -27,8 +29,8 @@ async function main() {
   });
   console.log("Discord bot connected");
 
-  // WebSocket server — handles cc-plugin and node-agent connections
-  const wsServer = createWebSocketServer(WS_PORT, router, {
+  // WebSocket server
+  const wsServer = createWebSocketServer(WS_PORT, router, auth, {
     onCcReply(shortId, channelName, text, _files) {
       discord.sendReply(channelName, shortId, text);
     },
@@ -37,6 +39,9 @@ async function main() {
     },
     onPluginDisconnected(shortId, channelName) {
       discord.postStatus(channelName, `[${shortId}] session ended`);
+    },
+    onPairingNeeded(code, clientType, hostname) {
+      discord.notifyPairing(code, clientType, hostname);
     },
   });
   console.log(`WebSocket server listening on port ${WS_PORT}`);

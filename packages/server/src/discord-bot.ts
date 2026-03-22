@@ -6,6 +6,7 @@ import {
   type Message,
 } from "discord.js";
 import type { Router } from "./router.js";
+import type { AuthManager } from "./auth.js";
 
 const MAX_MESSAGE_LENGTH = 2000;
 
@@ -25,11 +26,14 @@ export interface DiscordBotHandle {
   sendReply(channelName: string, shortId: string, text: string): Promise<void>;
   /** Post a status message (e.g., session connected/ended) */
   postStatus(channelName: string, text: string): Promise<void>;
+  /** Send a DM or channel message about pairing */
+  notifyPairing(code: string, clientType: string, hostname?: string): void;
 }
 
 export async function createDiscordBot(
   token: string,
   router: Router,
+  auth: AuthManager,
   events: DiscordBotEvents,
 ): Promise<DiscordBotHandle> {
   const client = new Client({
@@ -45,27 +49,50 @@ export async function createDiscordBot(
     if (message.channel.type !== ChannelType.GuildText) return;
 
     const channel = message.channel as TextChannel;
-    const channelName = channel.name;
+    const text = message.content.trim();
 
-    // Only handle messages in mapped channels
+    // Handle !pair <code> command in any channel
+    const pairMatch = text.match(/^!pair\s+([A-Fa-f0-9]{4})$/);
+    if (pairMatch) {
+      const code = pairMatch[1].toUpperCase();
+      const result = auth.confirmPairing(code, undefined);
+      if (result) {
+        message.reply(`Pairing confirmed. Token has been sent to the client.`);
+      } else {
+        message.reply(`Unknown or expired pairing code: ${code}`);
+      }
+      return;
+    }
+
+    // Handle !sessions command — list pending pairings
+    if (text === "!sessions") {
+      const codes = auth.getPendingCodes();
+      if (codes.length === 0) {
+        message.reply("No pending pairings.");
+      } else {
+        message.reply(`Pending pairings: ${codes.join(", ")}`);
+      }
+      return;
+    }
+
+    // Regular message routing — only in mapped channels
+    const channelName = channel.name;
     const discordId = router.getDiscordChannelId(channelName);
     if (!discordId) return;
 
     const from = message.author.displayName || message.author.username;
-    events.onUserMessage(channelName, from, message.content, message.id);
+    events.onUserMessage(channelName, from, text, message.id);
   });
 
   await client.login(token);
 
   async function findOrCreateChannel(channelName: string): Promise<TextChannel | null> {
-    // Check if we already have a mapped channel ID
     const existingId = router.getDiscordChannelId(channelName);
     if (existingId) {
       const ch = await client.channels.fetch(existingId).catch(() => null);
       if (ch && ch.type === ChannelType.GuildText) return ch as TextChannel;
     }
 
-    // Find by name in the first guild
     const guild = client.guilds.cache.first();
     if (!guild) return null;
 
@@ -78,7 +105,6 @@ export async function createDiscordBot(
       return existing;
     }
 
-    // Create the channel
     const created = await guild.channels.create({
       name: channelName,
       type: ChannelType.GuildText,
@@ -108,6 +134,21 @@ export async function createDiscordBot(
       if (!channel) return;
       await channel.send(`*${text}*`);
     },
+
+    notifyPairing(code, clientType, hostname) {
+      // Post to the first text channel in the guild
+      const guild = client.guilds.cache.first();
+      if (!guild) return;
+      const channel = guild.channels.cache.find(
+        (c) => c.type === ChannelType.GuildText,
+      ) as TextChannel | undefined;
+      if (!channel) return;
+
+      const source = hostname ? `${clientType} from ${hostname}` : clientType;
+      channel.send(
+        `*New pairing request from ${source}. Approve with:* \`!pair ${code}\``,
+      );
+    },
   };
 }
 
@@ -124,7 +165,6 @@ export function chunkMessage(text: string): string[] {
       break;
     }
 
-    // Try to split at a newline before the limit
     let splitAt = remaining.lastIndexOf("\n", MAX_MESSAGE_LENGTH);
     if (splitAt <= 0) {
       splitAt = MAX_MESSAGE_LENGTH;
@@ -133,7 +173,6 @@ export function chunkMessage(text: string): string[] {
     const chunk = remaining.slice(0, splitAt);
     remaining = remaining.slice(splitAt);
 
-    // Handle split code blocks — if chunk has odd number of ```, close it
     const backtickCount = (chunk.match(/```/g) || []).length;
     if (backtickCount % 2 !== 0) {
       chunks.push(chunk + "\n```");

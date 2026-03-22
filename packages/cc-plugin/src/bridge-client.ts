@@ -5,10 +5,11 @@ import {
   IDENTIFY_METHOD,
   CC_REPLY_METHOD,
   CC_MESSAGE_METHOD,
+  CcMessageParamsSchema,
+  saveClientConfig,
   type JsonRpcMessage,
-  type CcMessageParams,
+  type JsonRpcRequest,
 } from "@cc-hub/shared";
-import { CcMessageParamsSchema } from "@cc-hub/shared";
 
 export interface BridgeClientOptions {
   serverUrl: string;
@@ -21,6 +22,7 @@ export interface BridgeClientOptions {
 export function createBridgeClient(options: BridgeClientOptions) {
   let ws: WebSocket | null = null;
   let requestId = 0;
+  let currentToken = options.token;
 
   function nextId(): number {
     return ++requestId;
@@ -31,25 +33,23 @@ export function createBridgeClient(options: BridgeClientOptions) {
       ws = new WebSocket(options.serverUrl);
 
       ws.on("open", () => {
-        // Send identify message
         const msg = createRequest(
           IDENTIFY_METHOD,
           {
             clientType: "cc-plugin",
-            token: options.token,
+            token: currentToken,
             shortId: options.shortId,
             projectPath: options.projectPath,
           },
           nextId(),
         );
         ws!.send(JSON.stringify(msg));
-        resolve();
       });
 
       ws.on("message", (data) => {
         try {
           const msg = JSON.parse(data.toString()) as JsonRpcMessage;
-          handleMessage(msg);
+          handleMessage(msg, resolve);
         } catch {
           // ignore malformed messages
         }
@@ -60,7 +60,6 @@ export function createBridgeClient(options: BridgeClientOptions) {
       });
 
       ws.on("close", () => {
-        // Auto-reconnect after delay
         setTimeout(() => {
           connect().catch(() => {});
         }, 5000);
@@ -68,10 +67,49 @@ export function createBridgeClient(options: BridgeClientOptions) {
     });
   }
 
-  function handleMessage(msg: JsonRpcMessage): void {
-    if ("method" in msg && msg.method === CC_MESSAGE_METHOD) {
-      const params = CcMessageParamsSchema.parse(msg.params);
-      options.onMessage(params.from, params.text, params.messageId);
+  function handleMessage(msg: JsonRpcMessage, onReady: () => void): void {
+    if (!("method" in msg)) {
+      // JSON-RPC response — check if it's pairing needed
+      if ("result" in msg) {
+        const result = msg.result as { needsPairing?: boolean; pairingCode?: string };
+        if (result?.needsPairing && result?.pairingCode) {
+          console.error(
+            `\n[cc-hub] Pairing required. Ask someone to run in Discord:\n` +
+            `  !pair ${result.pairingCode}\n` +
+            `Waiting for approval...\n`,
+          );
+        }
+      }
+      return;
+    }
+
+    const request = msg as JsonRpcRequest;
+
+    // Server sends token after pairing
+    if (request.method === "auth.paired") {
+      const params = request.params as { token: string };
+      currentToken = params.token;
+      saveClientConfig({ token: params.token });
+      console.error("[cc-hub] Paired successfully. Token saved.");
+    }
+
+    // Server confirms registration
+    if (request.method === "auth.identified") {
+      const params = request.params as { ok: boolean; channel?: string };
+      if (params.ok) {
+        if (params.channel) {
+          console.error(`[cc-hub] Connected to channel: ${params.channel}`);
+        }
+        onReady();
+      }
+    }
+
+    // User message from chat platform
+    if (request.method === CC_MESSAGE_METHOD) {
+      const parsed = CcMessageParamsSchema.safeParse(request.params);
+      if (parsed.success) {
+        options.onMessage(parsed.data.from, parsed.data.text, parsed.data.messageId);
+      }
     }
   }
 
