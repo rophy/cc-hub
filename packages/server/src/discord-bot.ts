@@ -2,8 +2,13 @@ import {
   Client,
   GatewayIntentBits,
   ChannelType,
+  SlashCommandBuilder,
+  PermissionFlagsBits,
+  REST,
+  Routes,
   type TextChannel,
   type Message,
+  type ChatInputCommandInteraction,
 } from "discord.js";
 import type { Router } from "./router.js";
 import type { AuthManager } from "./auth.js";
@@ -39,34 +44,56 @@ export async function createDiscordBot(
       GatewayIntentBits.Guilds,
       GatewayIntentBits.GuildMessages,
       GatewayIntentBits.MessageContent,
-      GatewayIntentBits.DirectMessages,
     ],
-    partials: [2], // Partials.Channel — needed to receive DMs
   });
 
-  client.on("messageCreate", (message: Message) => {
-    if (message.author.bot) return;
+  // Register slash commands
+  const pairCommand = new SlashCommandBuilder()
+    .setName("pair")
+    .setDescription("Pair a cc-hub client with this guild")
+    .addStringOption((option) =>
+      option
+        .setName("code")
+        .setDescription("The 4-character pairing code shown in your terminal")
+        .setRequired(true),
+    )
+    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild);
 
-    const text = message.content.trim();
+  client.on("interactionCreate", async (interaction) => {
+    if (!interaction.isChatInputCommand()) return;
+    if (interaction.commandName !== "pair") return;
 
-    // Handle DMs — pairing commands only
-    if (message.channel.type === ChannelType.DM) {
-      const pairMatch = text.match(/^!pair\s+([A-Fa-f0-9]{4})$/i);
-      if (pairMatch) {
-        const code = pairMatch[1].toUpperCase();
-        const result = auth.confirmPairing(code, undefined);
-        if (result) {
-          message.reply("Pairing confirmed. Token has been sent to the client.");
-        } else {
-          message.reply(`Unknown or expired pairing code: ${code}`);
-        }
-      } else {
-        message.reply("Send `!pair <code>` to pair a cc-hub client.");
-      }
+    await handlePairCommand(interaction);
+  });
+
+  async function handlePairCommand(interaction: ChatInputCommandInteraction): Promise<void> {
+    const code = interaction.options.getString("code", true).toUpperCase();
+
+    if (!/^[0-9A-F]{4}$/.test(code)) {
+      await interaction.reply({
+        content: "Invalid pairing code. Must be 4 hex characters (e.g., A3F7).",
+        ephemeral: true,
+      });
       return;
     }
 
-    // Guild text channels — message routing only
+    const result = auth.confirmPairing(code);
+    if (result) {
+      await interaction.reply({
+        content: "Pairing confirmed. Token has been sent to the client.",
+        ephemeral: true,
+      });
+    } else {
+      await interaction.reply({
+        content: `Unknown or expired pairing code: ${code}`,
+        ephemeral: true,
+      });
+    }
+  }
+
+  // Handle guild messages — routing only
+  client.on("messageCreate", (message: Message) => {
+    if (message.author.bot) return;
     if (message.channel.type !== ChannelType.GuildText) return;
 
     const channel = message.channel as TextChannel;
@@ -75,10 +102,19 @@ export async function createDiscordBot(
     if (!discordId) return;
 
     const from = message.author.displayName || message.author.username;
-    events.onUserMessage(channelName, from, text, message.id);
+    events.onUserMessage(channelName, from, message.content.trim(), message.id);
   });
 
   await client.login(token);
+
+  // Register slash commands with Discord API
+  const rest = new REST().setToken(token);
+  const appId = client.application?.id;
+  if (appId) {
+    await rest.put(Routes.applicationCommands(appId), {
+      body: [pairCommand.toJSON()],
+    });
+  }
 
   async function findOrCreateChannel(channelName: string): Promise<TextChannel | null> {
     const existingId = router.getDiscordChannelId(channelName);
@@ -128,7 +164,6 @@ export async function createDiscordBot(
       if (!channel) return;
       await channel.send(`*${text}*`);
     },
-
   };
 }
 
