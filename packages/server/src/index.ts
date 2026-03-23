@@ -1,13 +1,17 @@
 #!/usr/bin/env node
 
 import { createWebSocketServer } from "./ws-server.js";
+import { createHttpServer } from "./http-server.js";
 import { createDiscordBot } from "./discord-bot.js";
 import { createRouter } from "./router.js";
 import { createAuthManager } from "./auth.js";
+import { formatHookEvent } from "./activity-formatter.js";
 import { loadState, saveState } from "./state.js";
 import { parseTargetPrefix } from "./message-utils.js";
+import { basename } from "node:path";
 
 const WS_PORT = parseInt(process.env.CC_HUB_WS_PORT || "3000", 10);
+const HTTP_PORT = parseInt(process.env.CC_HUB_HTTP_PORT || "3001", 10);
 const DISCORD_TOKEN = process.env.DISCORD_TOKEN;
 
 if (!DISCORD_TOKEN) {
@@ -43,9 +47,30 @@ async function main() {
   });
   console.log(`WebSocket server listening on port ${WS_PORT}`);
 
+  // HTTP server for hooks
+  const httpServer = createHttpServer(HTTP_PORT, {
+    onHookEvent(event) {
+      // Resolve channel from cwd
+      const cwd = event.cwd;
+      if (!cwd) return;
+
+      const channelName = basename(cwd);
+      // Check if this channel exists in our mappings
+      const discordId = router.getDiscordChannelId(channelName);
+      if (!discordId) return;
+
+      const message = formatHookEvent(event);
+      if (!message) return;
+
+      discord.postStatus(channelName, message);
+    },
+  });
+  console.log(`HTTP server listening on port ${HTTP_PORT}`);
+
   process.on("SIGINT", () => {
     console.log("Shutting down...");
     wsServer.close();
+    httpServer.close();
     discord.destroy();
     process.exit(0);
   });

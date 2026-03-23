@@ -162,7 +162,7 @@ export async function createDiscordBot(
     async postStatus(channelName, text) {
       const channel = await findOrCreateChannel(channelName);
       if (!channel) return;
-      await channel.send(`*${text}*`);
+      await channel.send(text);
     },
   };
 }

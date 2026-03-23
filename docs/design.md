@@ -255,12 +255,56 @@ Server state is stored in a JSON config file in the user's home directory (e.g.,
 
 A single server process reads/writes this file — no concurrent access concerns. Atomic writes (write to temp file, rename) prevent corruption on crash.
 
+## Activity Mirroring
+
+cc-hub mirrors CC session activity to Discord using two mechanisms:
+
+### Channel Plugin (bidirectional messaging)
+
+The cc-plugin handles user ↔ Claude conversation via MCP channel notifications and the `reply` tool.
+
+### Hooks (activity streaming)
+
+CC hooks (an official, stable interface) stream session activity to the server via HTTP POST. This gives Discord visibility into everything Claude is doing — not just channel messages.
+
+The server exposes an HTTP endpoint at `POST /hooks/activity` that receives hook events and forwards them to the appropriate Discord channel based on `cwd`.
+
+#### Supported hook events
+
+| Event | What Discord sees |
+|---|---|
+| UserPromptSubmit | User's prompt text |
+| PreToolUse | Tool about to execute (name + args) |
+| PostToolUse | Tool result (output preview) |
+| PostToolUseFailure | Tool error message |
+| Stop | Turn complete indicator |
+| SessionStart/End | Session lifecycle |
+| SubagentStart/Stop | Subagent activity |
+
+#### Hook configuration
+
+Users configure hooks in `~/.claude/settings.json`:
+
+```json
+{
+  "hooks": {
+    "PostToolUse": [{ "matcher": "", "hooks": [{ "type": "http", "url": "http://localhost:3001/hooks/activity" }] }],
+    "PreToolUse": [{ "matcher": "", "hooks": [{ "type": "http", "url": "http://localhost:3001/hooks/activity" }] }],
+    "UserPromptSubmit": [{ "matcher": "", "hooks": [{ "type": "http", "url": "http://localhost:3001/hooks/activity" }] }],
+    "Stop": [{ "matcher": "", "hooks": [{ "type": "http", "url": "http://localhost:3001/hooks/activity" }] }],
+    "SessionStart": [{ "matcher": "", "hooks": [{ "type": "http", "url": "http://localhost:3001/hooks/activity" }] }],
+    "SessionEnd": [{ "matcher": "", "hooks": [{ "type": "http", "url": "http://localhost:3001/hooks/activity" }] }]
+  }
+}
+```
+
+#### Why hooks instead of CLI output parsing
+
+Projects like Happy Coder parse Claude CLI stdout to mirror activity. This is fragile — CLI output format is not a stable API, and every CC update can break the parser. Hooks are an official, documented interface with structured JSON input, designed for external integrations.
+
 ## Message Formatting
 
-Claude's channel plugin system is non-streaming — `reply` is called once with the complete response as markdown text. The cc-plugin forwards this raw text to the server. The server handles platform-specific formatting:
-
 - **Chunking**: Split long messages at Discord's 2000-char limit, respecting markdown boundaries (don't split mid-code-block)
-- **No streaming**: No progressive message edits needed. Claude completes the full response before calling `reply`.
 - **Markdown passthrough**: Claude already formats output as markdown. Discord renders markdown natively. No transformation needed.
 
 ## Technology Stack
