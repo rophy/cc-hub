@@ -1,19 +1,35 @@
 /** Parse a single line of stream-json output from Claude Code */
 export interface StreamJsonEvent {
   type: string;
+  subtype?: string;
   session_id?: string;
-  event?: {
-    delta?: {
+
+  // assistant message
+  message?: {
+    content?: Array<{
       type: string;
       text?: string;
       name?: string;
-      tool_id?: string;
+      id?: string;
       input?: Record<string, unknown>;
-      content?: string;
-    };
+    }>;
   };
-  // System events
-  subtype?: string;
+
+  // result
+  result?: string;
+  is_error?: boolean;
+
+  // system init
+  cwd?: string;
+  tools?: string[];
+
+  // tool result content block
+  content?: Array<{
+    type: string;
+    text?: string;
+  }>;
+
+  // error
   error?: string;
 }
 

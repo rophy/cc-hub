@@ -6,7 +6,6 @@ import { createRouter } from "./router.js";
 import { createAuthManager } from "./auth.js";
 import { formatStreamEvent } from "./stream-formatter.js";
 import { loadState, saveState } from "./state.js";
-import { createRequest } from "@cc-hub/shared";
 
 const WS_PORT = parseInt(process.env.CC_HUB_WS_PORT || "3000", 10);
 const DISCORD_TOKEN = process.env.DISCORD_TOKEN;
@@ -16,23 +15,17 @@ if (!DISCORD_TOKEN) {
   process.exit(1);
 }
 
-let requestIdCounter = 0;
-
 async function main() {
   const state = loadState();
   const router = createRouter(state, saveState);
   const auth = createAuthManager(state, saveState);
 
-  // Track active Mode B sessions: shortId → channelName
-  const modeBSessions = new Map<string, string>();
+  // Channels currently processing a headless prompt
+  const busyChannels = new Set<string>();
 
   function hasActiveSession(channelName: string): boolean {
-    // Check Mode A (cc-plugin)
     if (router.getPluginsForChannel(channelName).length > 0) return true;
-    // Check Mode B (headless)
-    for (const ch of modeBSessions.values()) {
-      if (ch === channelName) return true;
-    }
+    if (busyChannels.has(channelName)) return true;
     return false;
   }
 
@@ -41,25 +34,24 @@ async function main() {
     hasActiveSession,
 
     onUserMessage(channelName, from, text, messageId) {
-      // Route to Mode A if available
+      // Route to Mode A (cc-plugin) if available
       const plugins = router.getPluginsForChannel(channelName);
       if (plugins.length > 0) {
         wsServer.sendToChannel(channelName, from, text, messageId);
         return;
       }
 
-      // Route to Mode B
-      for (const [shortId, ch] of modeBSessions) {
-        if (ch === channelName) {
-          wsServer.sendToNodeSession(shortId, from, text);
-          return;
-        }
+      // Route to Mode B (node-agent)
+      const projectPath = router.getProjectPathForChannel(channelName);
+      if (projectPath) {
+        busyChannels.add(channelName);
+        wsServer.sendToNodeSession(channelName, from, text, projectPath);
       }
     },
 
     async onStartHeadless(channelName, projectPath, prompt) {
       if (hasActiveSession(channelName)) {
-        return { ok: false, error: "Channel already has an active session" };
+        return { ok: false, error: "Channel is busy" };
       }
 
       const agents = router.getNodeAgents();
@@ -67,37 +59,9 @@ async function main() {
         return { ok: false, error: "No node-agents connected" };
       }
 
-      return new Promise((resolve) => {
-        const agent = agents[0];
-        const id = ++requestIdCounter;
-
-        const msg = createRequest("node.start_session", {
-          projectPath,
-          prompt,
-          channelName,
-        }, id);
-
-        const onMessage = (data: unknown) => {
-          try {
-            const resp = JSON.parse(String(data));
-            if (resp.id === id && resp.result) {
-              agent.ws.removeListener("message", onMessage);
-              if (resp.result.ok && resp.result.shortId) {
-                modeBSessions.set(resp.result.shortId, channelName);
-              }
-              resolve(resp.result);
-            }
-          } catch { /* ignore */ }
-        };
-
-        agent.ws.on("message", onMessage);
-        agent.ws.send(JSON.stringify(msg));
-
-        setTimeout(() => {
-          agent.ws.removeListener("message", onMessage);
-          resolve({ ok: false, error: "Timeout waiting for node-agent" });
-        }, 10000);
-      });
+      busyChannels.add(channelName);
+      wsServer.sendToNodeSession(channelName, "discord", prompt, projectPath);
+      return { ok: true };
     },
   });
   console.log("Discord bot connected");
@@ -108,7 +72,7 @@ async function main() {
     onCcReply(shortId, channelName, text, _files) {
       discord.sendReply(channelName, shortId, text);
     },
-    onPluginConnecting(shortId, channelName) {
+    onPluginConnecting(_shortId, channelName) {
       return !hasActiveSession(channelName);
     },
     onPluginConnected(shortId, channelName) {
@@ -120,18 +84,17 @@ async function main() {
 
     // Mode B: node-agent stream events
     onStreamEvent(event) {
-      const message = formatStreamEvent(event);
-      if (!message) return;
+      if (!event.channelName) return;
 
-      const channelName = event.channelName;
-      if (!channelName) return;
-
-      // Clean up ended sessions
+      // Prompt finished — release the channel
       if (event.eventType === "session_end") {
-        modeBSessions.delete(event.shortId);
+        busyChannels.delete(event.channelName);
+        return; // Don't post "session ended" to Discord
       }
 
-      discord.postStatus(channelName, message);
+      const message = formatStreamEvent(event);
+      if (!message) return;
+      discord.postStatus(event.channelName, message);
     },
   });
   console.log(`WebSocket server listening on port ${WS_PORT}`);

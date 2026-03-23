@@ -40,11 +40,12 @@ export interface WsServerHandle {
     messageId?: string,
     targetShortId?: string,
   ): void;
-  /** Send a message to a node-agent managed session (Mode B) */
+  /** Send a message to a node-agent for headless execution (Mode B) */
   sendToNodeSession(
-    shortId: string,
+    channelName: string,
     from: string,
     text: string,
+    projectPath: string,
   ): void;
 }
 
@@ -247,16 +248,18 @@ export function createWebSocketServer(
         plugin.ws.send(JSON.stringify(msg));
       }
     },
-    sendToNodeSession(shortId, from, text) {
-      // Find the node-agent that manages this session and send the message
-      for (const agent of router.getNodeAgents()) {
-        const msg = createRequest(
-          NODE_SEND_MESSAGE_METHOD,
-          { shortId, text, from },
-          ++requestIdCounter,
-        );
-        agent.ws.send(JSON.stringify(msg));
-      }
+    sendToNodeSession(channelName, from, text, projectPath) {
+      const agents = router.getNodeAgents();
+      if (agents.length === 0) return;
+
+      // Send to first available node-agent
+      const agent = agents[0];
+      const msg = createRequest(
+        NODE_SEND_MESSAGE_METHOD,
+        { shortId: projectPath, text, from },
+        ++requestIdCounter,
+      );
+      agent.ws.send(JSON.stringify(msg));
     },
   };
 }

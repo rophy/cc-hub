@@ -15,14 +15,10 @@ async function main() {
     token: config.token,
     shortId,
     hostname: hostname(),
-    onStartSession: async (projectPath, prompt, channelName) => {
-      return sessionManager.startSession(projectPath, prompt, channelName);
-    },
-    onStopSession: async (sessionShortId) => {
-      return sessionManager.stopSession(sessionShortId);
-    },
-    onSendMessage: async (sessionShortId, text, from) => {
-      return sessionManager.sendMessage(sessionShortId, text);
+    onRunPrompt: async (projectPath, prompt) => {
+      const { basename } = await import("node:path");
+      const channelName = basename(projectPath);
+      return sessionManager.runPrompt(projectPath, prompt, channelName);
     },
   });
 
@@ -30,26 +26,13 @@ async function main() {
     onStreamEvent(event) {
       client.sendStreamEvent(event);
     },
-    onSessionEnd(sessionShortId, channelName) {
-      client.sendStreamEvent({
-        shortId: sessionShortId,
-        channelName,
-        eventType: "session_end",
-        text: "Session ended",
-      });
-    },
   });
 
   await client.connect();
   console.log(`Node agent [${shortId}] connected to ${config.serverUrl}`);
 
-  setInterval(() => {
-    client.sendHeartbeat(sessionManager.getActiveSessions());
-  }, 30000);
-
   process.on("SIGINT", () => {
     console.log("Shutting down node agent...");
-    sessionManager.stopAll();
     process.exit(0);
   });
 }

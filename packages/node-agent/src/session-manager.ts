@@ -1,4 +1,4 @@
-import { spawn, type ChildProcess } from "node:child_process";
+import { spawn } from "node:child_process";
 import { createInterface } from "node:readline";
 import { parseStreamLine } from "./stream-parser.js";
 import type { NodeStreamEventParams } from "@cc-hub/shared";
@@ -6,110 +6,87 @@ import { generateShortId } from "./utils.js";
 
 export interface SessionEvents {
   onStreamEvent(event: NodeStreamEventParams): void;
-  onSessionEnd(shortId: string, channelName: string): void;
 }
 
-interface ManagedSession {
-  shortId: string;
-  channelName: string;
-  projectPath: string;
-  ccSessionId?: string;
-  process: ChildProcess | null;
-  textBuffer: string;
-  textFlushTimer: ReturnType<typeof setTimeout> | null;
-}
+/** Tracks whether a channel is currently processing a prompt */
+const busyChannels = new Set<string>();
 
 export class SessionManager {
-  private sessions = new Map<string, ManagedSession>();
   private events: SessionEvents;
-  private static TEXT_FLUSH_INTERVAL = 500;
 
   constructor(events: SessionEvents) {
     this.events = events;
   }
 
-  async startSession(
+  /** Run a prompt in headless mode, streaming output via events */
+  async runPrompt(
     projectPath: string,
     prompt: string,
     channelName: string,
-  ): Promise<{ ok: boolean; shortId?: string; error?: string }> {
+  ): Promise<{ ok: boolean; error?: string }> {
+    if (busyChannels.has(channelName)) {
+      return { ok: false, error: "Channel is busy processing a previous message" };
+    }
+
+    busyChannels.add(channelName);
     const shortId = generateShortId();
 
-    const session: ManagedSession = {
-      shortId,
-      channelName,
-      projectPath,
-      process: null,
-      textBuffer: "",
-      textFlushTimer: null,
-    };
-    this.sessions.set(shortId, session);
-
-    this.events.onStreamEvent({
-      shortId,
-      channelName,
-      eventType: "session_start",
-      text: `Session started in \`${projectPath}\``,
-    });
-
     try {
-      await this.runPrompt(session, prompt);
-      return { ok: true, shortId };
-    } catch (err) {
-      return {
-        ok: false,
-        shortId,
-        error: err instanceof Error ? err.message : "Unknown error",
-      };
-    }
-  }
-
-  async sendMessage(
-    shortId: string,
-    text: string,
-  ): Promise<{ ok: boolean; error?: string }> {
-    const session = this.sessions.get(shortId);
-    if (!session) {
-      return { ok: false, error: `Session ${shortId} not found` };
-    }
-
-    if (session.process) {
-      return { ok: false, error: "Session is busy processing" };
-    }
-
-    try {
-      await this.runPrompt(session, text);
+      await this.spawnClaude(projectPath, prompt, channelName, shortId);
       return { ok: true };
     } catch (err) {
       return {
         ok: false,
         error: err instanceof Error ? err.message : "Unknown error",
       };
+    } finally {
+      busyChannels.delete(channelName);
     }
   }
 
-  private runPrompt(session: ManagedSession, prompt: string): Promise<void> {
+  private spawnClaude(
+    projectPath: string,
+    prompt: string,
+    channelName: string,
+    shortId: string,
+  ): Promise<void> {
     return new Promise((resolve, reject) => {
-      const args = [
+      const child = spawn("claude", [
         "-p", prompt,
+        "--continue",
         "--output-format", "stream-json",
-      ];
-
-      if (session.ccSessionId) {
-        // Resume the specific session
-        args.push("--resume", session.ccSessionId);
-      } else {
-        // First message — continue the latest session in this directory
-        args.push("--continue");
-      }
-
-      const child = spawn("claude", args, {
-        cwd: session.projectPath,
+        "--verbose",
+      ], {
+        cwd: projectPath,
         stdio: ["ignore", "pipe", "pipe"],
         env: { ...process.env },
       });
 
-      session.process = child;
+      let textBuffer = "";
+      let flushTimer: ReturnType<typeof setTimeout> | null = null;
+
+      const flushText = () => {
+        if (flushTimer) {
+          clearTimeout(flushTimer);
+          flushTimer = null;
+        }
+        if (textBuffer) {
+          this.events.onStreamEvent({
+            shortId,
+            channelName,
+            eventType: "text",
+            text: textBuffer,
+          });
+          textBuffer = "";
+        }
+      };
+
+      const bufferText = (text: string) => {
+        textBuffer += text;
+        if (!flushTimer) {
+          flushTimer = setTimeout(flushText, 500);
+        }
+      };
 
       const rl = createInterface({ input: child.stdout! });
 
@@ -117,48 +94,55 @@ export class SessionManager {
         const event = parseStreamLine(line);
         if (!event) return;
 
-        // Capture session ID
-        if (event.session_id && !session.ccSessionId) {
-          session.ccSessionId = event.session_id;
-        }
-
-        if (event.type === "stream_event" && event.event?.delta) {
-          const delta = event.event.delta;
-
-          switch (delta.type) {
-            case "text_delta":
-              if (delta.text) {
-                this.bufferText(session, delta.text);
-              }
-              break;
-
-            case "tool_call":
-              this.flushText(session);
+        // Assistant message — text and tool_use blocks
+        if (event.type === "assistant" && event.message?.content) {
+          for (const block of event.message.content) {
+            if (block.type === "text" && block.text) {
+              bufferText(block.text);
+            }
+            if (block.type === "tool_use" && block.name) {
+              flushText();
               this.events.onStreamEvent({
-                shortId: session.shortId,
-                channelName: session.channelName,
+                shortId,
+                channelName,
                 eventType: "tool_call",
-                toolName: delta.name,
-                toolInput: delta.input,
+                toolName: block.name,
+                toolInput: block.input,
               });
-              break;
-
-            case "tool_result":
-              this.events.onStreamEvent({
-                shortId: session.shortId,
-                channelName: session.channelName,
-                eventType: "tool_result",
-                toolName: delta.name,
-                toolResult: delta.content,
-              });
-              break;
+            }
           }
         }
 
+        // Tool result
+        if (event.type === "tool_result" && event.content) {
+          for (const block of event.content) {
+            if (block.type === "text" && block.text) {
+              this.events.onStreamEvent({
+                shortId,
+                channelName,
+                eventType: "tool_result",
+                toolResult: block.text,
+              });
+            }
+          }
+        }
+
+        // Error result
+        if (event.type === "result" && event.is_error && event.result) {
+          flushText();
+          this.events.onStreamEvent({
+            shortId,
+            channelName,
+            eventType: "error",
+            text: event.result,
+          });
+        }
+
+        // System error
         if (event.type === "system" && event.error) {
           this.events.onStreamEvent({
-            shortId: session.shortId,
-            channelName: session.channelName,
+            shortId,
+            channelName,
             eventType: "error",
             text: event.error,
           });
@@ -171,17 +155,23 @@ export class SessionManager {
       });
 
       child.on("exit", (code) => {
-        session.process = null;
-        this.flushText(session);
+        flushText();
 
         if (code !== 0 && stderr) {
           this.events.onStreamEvent({
-            shortId: session.shortId,
-            channelName: session.channelName,
+            shortId,
+            channelName,
             eventType: "error",
             text: stderr.slice(0, 500),
           });
         }
+
+        // Signal prompt completion
+        this.events.onStreamEvent({
+          shortId,
+          channelName,
+          eventType: "session_end",
+        });
 
         if (code === 0) {
           resolve();
@@ -190,73 +180,7 @@ export class SessionManager {
         }
       });
 
-      child.on("error", (err) => {
-        session.process = null;
-        reject(err);
-      });
+      child.on("error", reject);
     });
-  }
-
-  private bufferText(session: ManagedSession, text: string): void {
-    session.textBuffer += text;
-    if (!session.textFlushTimer) {
-      session.textFlushTimer = setTimeout(() => {
-        this.flushText(session);
-      }, SessionManager.TEXT_FLUSH_INTERVAL);
-    }
-  }
-
-  private flushText(session: ManagedSession): void {
-    if (session.textFlushTimer) {
-      clearTimeout(session.textFlushTimer);
-      session.textFlushTimer = null;
-    }
-    if (session.textBuffer) {
-      this.events.onStreamEvent({
-        shortId: session.shortId,
-        channelName: session.channelName,
-        eventType: "text",
-        text: session.textBuffer,
-      });
-      session.textBuffer = "";
-    }
-  }
-
-  async stopSession(shortId: string): Promise<{ ok: boolean; error?: string }> {
-    const session = this.sessions.get(shortId);
-    if (!session) {
-      return { ok: false, error: `Session ${shortId} not found` };
-    }
-
-    if (session.process) {
-      session.process.kill("SIGTERM");
-    }
-    this.sessions.delete(shortId);
-
-    this.events.onSessionEnd(shortId, session.channelName);
-    return { ok: true };
-  }
-
-  getActiveSessions(): string[] {
-    return Array.from(this.sessions.keys());
-  }
-
-  getSession(shortId: string): ManagedSession | undefined {
-    return this.sessions.get(shortId);
-  }
-
-  getSessionsForChannel(channelName: string): ManagedSession[] {
-    return Array.from(this.sessions.values()).filter(
-      (s) => s.channelName === channelName,
-    );
-  }
-
-  stopAll(): void {
-    for (const session of this.sessions.values()) {
-      if (session.process) {
-        session.process.kill("SIGTERM");
-      }
-    }
-    this.sessions.clear();
   }
 }
