@@ -2,6 +2,17 @@ import { basename } from "node:path";
 import type { ServerState, ChannelMapping } from "./state.js";
 import type WebSocket from "ws";
 
+/** Convert a folder name to a valid Discord channel name: lowercase a-z, 0-9, hyphens, underscores */
+export function toDiscordChannelName(name: string): string {
+  const sanitized = name
+    .toLowerCase()
+    .replace(/\s+/g, "-")       // spaces to hyphens
+    .replace(/[^a-z0-9\-_]/g, "") // strip invalid chars
+    .replace(/-{2,}/g, "-")     // collapse consecutive hyphens
+    .replace(/^-|-$/g, "");     // trim leading/trailing hyphens
+  return sanitized || "unnamed";
+}
+
 export interface ConnectedPlugin {
   ws: WebSocket;
   shortId: string;
@@ -55,7 +66,7 @@ export function createRouter(
     const existing = state.channels.find((c) => c.projectPath === projectPath);
     if (existing) return existing.channelName;
 
-    const name = basename(projectPath);
+    const name = toDiscordChannelName(basename(projectPath));
     // Avoid duplicates by appending a suffix
     const existingNames = new Set(state.channels.map((c) => c.channelName));
     let channelName = name;

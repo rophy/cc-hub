@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { createRouter, type Router } from "../../src/router.js";
+import { createRouter, toDiscordChannelName, type Router } from "../../src/router.js";
 import type { ServerState } from "../../src/state.js";
 import type WebSocket from "ws";
 
@@ -94,5 +94,39 @@ describe("router", () => {
     it("returns undefined for unmapped channel", () => {
       expect(router.getDiscordChannelId("nonexistent")).toBeUndefined();
     });
+  });
+});
+
+describe("toDiscordChannelName", () => {
+  it("lowercases", () => {
+    expect(toDiscordChannelName("MyProject")).toBe("myproject");
+  });
+
+  it("replaces spaces with hyphens", () => {
+    expect(toDiscordChannelName("My Cool Project")).toBe("my-cool-project");
+  });
+
+  it("strips invalid characters", () => {
+    expect(toDiscordChannelName("project (v2)")).toBe("project-v2");
+  });
+
+  it("collapses consecutive hyphens", () => {
+    expect(toDiscordChannelName("my--project")).toBe("my-project");
+  });
+
+  it("trims leading/trailing hyphens", () => {
+    expect(toDiscordChannelName("-project-")).toBe("project");
+  });
+
+  it("preserves underscores", () => {
+    expect(toDiscordChannelName("my_project")).toBe("my_project");
+  });
+
+  it("handles dots and special chars", () => {
+    expect(toDiscordChannelName("project.v2@beta!")).toBe("projectv2beta");
+  });
+
+  it("returns 'unnamed' for empty result", () => {
+    expect(toDiscordChannelName("!!!")).toBe("unnamed");
   });
 });
