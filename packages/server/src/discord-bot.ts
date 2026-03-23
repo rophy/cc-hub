@@ -101,7 +101,8 @@ export async function createDiscordBot(
 
   // Handle messages — @mention to interact with sessions
   client.on("messageCreate", async (message: Message) => {
-    if (message.author.bot) return;
+    // Ignore own messages to prevent loops
+    if (message.author.id === client.user?.id) return;
     if (message.channel.type !== ChannelType.GuildText) return;
 
     const channel = message.channel as TextChannel;
