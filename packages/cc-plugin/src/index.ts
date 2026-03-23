@@ -23,8 +23,9 @@ const mcp = new Server(
       tools: {},
     },
     instructions: [
-      `Messages from cc-hub arrive as <channel source="cc-hub" ...>.`,
-      `Use the reply tool to respond. Always pass the chat_id back.`,
+      `Messages from cc-hub arrive as <channel source="cc-hub" chat_id="..." user="...">.`,
+      `You MUST call the reply tool for EVERY channel message — the sender cannot see your terminal output.`,
+      `Always pass the chat_id back when calling reply.`,
       `Your session ID is [${shortId}].`,
     ].join(" "),
   },

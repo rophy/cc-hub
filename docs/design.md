@@ -6,19 +6,63 @@ cc-hub bridges messaging platforms (Discord, Slack) to Claude Code sessions, ena
 
 A single Discord/Slack bot serves multiple CC sessions across multiple machines. This is necessary because Discord limits bot connections — running one bot per CC session does not scale.
 
+## Two Modes
+
+cc-hub supports two distinct modes of operation:
+
+### Mode A: Terminal-driven (channel plugin)
+
+The user starts CC in a terminal with the cc-hub channel plugin. Discord acts as a side channel — Discord users can send messages that Claude receives and replies to via the `reply` tool. Terminal prompts and Claude's text responses stay local to the terminal.
+
+```
+Terminal ←──stdio──→ CC session ←──stdio──→ cc-plugin ←──WS──→ Server ←──→ Discord
+  (local)              (local)              (MCP relay)
+```
+
+**Use case**: Developer working locally, wants to receive messages or delegate tasks via Discord while maintaining full terminal access.
+
+**Limitation**: Discord only sees messages explicitly sent via the channel. Claude's text responses to terminal prompts are not visible in Discord — CC hooks cannot capture assistant text output (open feature request [#37243](https://github.com/anthropics/claude-code/issues/37243)).
+
+### Mode B: Discord-driven (headless)
+
+Discord initiates the CC session. The node-agent spawns CC in headless mode (`-p` flag with `--output-format stream-json`). All output — text responses, tool calls, results — is captured and streamed to Discord. Follow-up messages use `--continue`/`--resume` for session continuity.
+
+```
+Discord ←──→ Server ←──WS──→ Node-agent ──spawns──→ claude -p "..." --output-format stream-json
+                                  │
+                                  └── parses stream-json → sends to Server → Discord
+```
+
+**Use case**: Mobile access, remote work, fully Discord-native experience. No terminal needed.
+
+**Advantage**: Complete output mirroring — everything Claude produces is visible in Discord.
+
+### Comparison
+
+| | Mode A (terminal-driven) | Mode B (Discord-driven) |
+|---|---|---|
+| Who starts CC | User in terminal | Discord user via bot command |
+| CC process | Long-lived, interactive | One per message (headless), uses `--continue` |
+| Terminal access | Full | None |
+| Discord sees | Channel messages only | Everything (text, tools, results) |
+| Claude's text responses | Terminal only | Streamed to Discord |
+| Tool activity | Not visible in Discord | Streamed to Discord |
+
+Both modes can coexist in the same Discord channel — a terminal session (Mode A) and a headless session (Mode B) can run simultaneously in the same project channel.
+
 ## Components
 
 ```
                           ┌─────────────────┐
                           │     Server       │
-Discord/Slack ←──HTTP────→│  (API + routing) │
+Discord/Slack ←──────────→│  (API + routing) │
                           └───────┬─────────┘
                                   │ WebSocket
                     ┌─────────────┼─────────────┐
                     │             │              │
               ┌─────┴──────┐ ┌───┴────┐   ┌─────┴──────┐
               │ cc-plugin   │ │cc-plugin│   │ node-agent │
-              │ (MCP↔WS)   │ │(MCP↔WS)│   │ (orchestr.)│
+              │ (Mode A)    │ │(Mode A)│   │ (Mode B)   │
               └─────┬──────┘ └───┬────┘   └────────────┘
                     │            │
               CC Session 1  CC Session 2       Machine B
@@ -27,18 +71,16 @@ Discord/Slack ←──HTTP────→│  (API + routing) │
 
 ### server
 
-Central API layer. Exposes HTTP and WebSocket endpoints.
+Central API layer. Exposes WebSocket endpoints.
 
 Responsibilities:
 - Accepts WebSocket connections from cc-plugins and node-agents
 - Provides a chatbot interface that messaging platforms implement (Discord, Slack, etc.)
-- Routes messages between platform channels and cc-plugin connections
+- Routes messages between platform channels and cc-plugin/node-agent connections
 - Manages session-to-channel mappings
 - Enforces access control
 
-The server does not know how to spawn CC sessions — it delegates that to node-agents.
-
-### cc-plugin
+### cc-plugin (Mode A)
 
 A Claude Code channel plugin. Spawned by CC as an MCP server over stdio.
 
@@ -51,20 +93,22 @@ Responsibilities:
 
 The cc-plugin does not depend on node-agent. Users can always launch CC directly:
 ```
-claude --channels cc-hub-plugin
+claude --dangerously-load-development-channels server:cc-hub
 ```
 
-### node-agent
+### node-agent (Mode B)
 
 A long-lived process running on a machine capable of hosting CC sessions.
 
 Responsibilities:
 - Connects to the server via WebSocket
 - Receives commands to start/stop CC sessions
+- Spawns CC in headless mode (`claude -p "..." --output-format stream-json`)
+- Parses stream-json output and sends all events to the server
+- Manages session continuity via `--continue`/`--resume`
 - Reports machine and session status
-- Manages working directories and session configuration
 
-The node-agent is optional. It is only needed when users want to launch CC sessions remotely (e.g., from a Discord command).
+The node-agent is required for Mode B. It is not needed for Mode A.
 
 ## Project Structure
 
@@ -73,7 +117,7 @@ cc-hub/
   shared/       # Message types, Zod schemas, shared protocol definitions
   server/       # API layer + chatbot interface implementations
   cc-plugin/    # CC channel plugin (MCP server + WebSocket client)
-  node-agent/   # Machine-level orchestration agent
+  node-agent/   # Machine-level orchestration agent + headless CC manager
 ```
 
 ## Protocol
@@ -89,7 +133,7 @@ cc-hub/
 
 **JSON-RPC 2.0** over WebSocket. Both cc-plugin and node-agent connect to the same server endpoint. Message types are namespaced to distinguish the two protocols.
 
-#### cc-plugin methods
+#### cc-plugin methods (Mode A)
 
 Relay messages between a chat platform and a CC session.
 
@@ -97,17 +141,17 @@ Relay messages between a chat platform and a CC session.
 |--------|-----------|-------------|
 | `cc.message` | server → plugin | User message from chat platform |
 | `cc.reply` | plugin → server | CC response back to chat platform |
-| `cc.turn_start` | plugin → server | CC started processing |
-| `cc.turn_end` | plugin → server | CC finished processing |
 
-#### node-agent methods
+#### node-agent methods (Mode B)
 
-Orchestration commands for managing CC sessions on a machine.
+Orchestration and output streaming for headless CC sessions.
 
 | Method | Direction | Description |
 |--------|-----------|-------------|
-| `node.start_session` | server → agent | Launch a new CC session |
+| `node.start_session` | server → agent | Launch a new headless CC session |
 | `node.stop_session` | server → agent | Terminate a CC session |
+| `node.send_message` | server → agent | Send a follow-up message to a session |
+| `node.stream_event` | agent → server | Streamed output event (text, tool call, result) |
 | `node.session_status` | both | Query or report session state |
 | `node.heartbeat` | agent → server | Periodic liveness signal |
 
@@ -121,7 +165,7 @@ Orchestration commands for managing CC sessions on a machine.
 
 ## Message Flow
 
-### User sends a message from Discord
+### Mode A: User sends a message from Discord (terminal-driven)
 
 ```
 User types in Discord #proj-a
@@ -136,24 +180,38 @@ User types in Discord #proj-a
   → Server sends message to Discord #proj-a
 ```
 
-### User launches a CC session from Discord
+### Mode B: User sends a message from Discord (headless)
+
+```
+User types in Discord #proj-a
+  → Server receives message via Discord bot
+  → Server looks up route: #proj-a → node-agent managing session A
+  → Server sends JSON-RPC node.send_message over WebSocket
+  → Node-agent runs: claude -p "user's message" --continue --output-format stream-json
+  → Node-agent parses stream-json events as they arrive
+  → For each event (text chunk, tool call, result):
+    → Node-agent sends JSON-RPC node.stream_event over WebSocket
+    → Server formats and sends to Discord #proj-a
+  → CC process exits
+  → Node-agent reports session idle
+```
+
+### Mode B: User starts a CC session from Discord
 
 ```
 User types "/start proj-a" in Discord
   → Server receives command
   → Server selects a node-agent (or user specifies which)
   → Server sends JSON-RPC node.start_session to the node-agent
-  → Node-agent runs: claude --channels cc-hub-plugin ...
-  → CC starts and spawns cc-plugin as a child process
-  → cc-plugin connects to server via WebSocket and identifies itself
-  → Server maps Discord channel ↔ this cc-plugin connection
-  → Server confirms to Discord: "Session started in #proj-a"
+  → Node-agent spawns: claude -p "initial prompt" --output-format stream-json --session-id <id>
+  → Stream-json output is parsed and forwarded to Discord
+  → Session ID is stored for future --continue/--resume
 ```
 
-### User launches CC directly from terminal
+### Mode A: User launches CC directly from terminal
 
 ```
-User runs: claude --channels cc-hub-plugin
+User runs: claude --dangerously-load-development-channels server:cc-hub
   → CC spawns cc-plugin
   → cc-plugin connects to server via WebSocket
   → Server assigns or creates a channel mapping
@@ -168,7 +226,7 @@ Responsibilities of a chatbot implementation:
 - Connect to the platform (Discord Gateway, Slack RTM, etc.)
 - Receive messages and translate them to internal format
 - Send replies back to the platform, handling platform-specific constraints (e.g., Discord 2000-char message limit, chunking, code block formatting)
-- Handle platform commands (e.g., `/start`, `/stop`)
+- Handle platform commands (e.g., `/start`, `/stop`, `/pair`)
 
 Discord is the first implementation. The interface should be simple enough that adding Slack or other platforms is straightforward.
 
@@ -183,9 +241,9 @@ Both cc-plugin and node-agent use the same auth model. From the server's perspec
 ```
 Client (cc-plugin or node-agent) connects to server
   → Server returns a pairing code (e.g., "A3F7")
-  → User confirms the code in Discord (e.g., bot DM or command)
+  → Guild admin runs /pair A3F7 in Discord (slash command, admin-only)
   → Server issues a persistent token
-  → Client stores token in ~/.cc-hub/credentials
+  → Client stores token in ~/.cc-hub/config.json
 ```
 
 #### Subsequent Connections
@@ -205,7 +263,7 @@ A machine running both a node-agent and CC sessions pairs once. The node-agent's
 | Client type | Capabilities |
 |---|---|
 | cc-plugin | Send/receive messages for its session |
-| node-agent | Start/stop sessions, report machine status |
+| node-agent | Start/stop sessions, stream output, report machine status |
 
 ### Platform User Authorization
 
@@ -218,7 +276,7 @@ Options (configurable per deployment):
 
 ## Channel Mapping
 
-Channels are mapped by **project path**. The cc-plugin reads `$PWD` on startup and sends it to the server during `identify`. The server maps each unique project path to a chat platform channel.
+Channels are mapped by **project path**. The cc-plugin reads `$PWD` on startup and sends it to the server during `identify`. For Mode B, the project path is specified in the `/start` command. The server maps each unique project path to a chat platform channel.
 
 - `/home/rophy/projects/cc-hub` → `#cc-hub`
 - `/home/rophy/projects/api-server` → `#api-server`
@@ -227,7 +285,7 @@ If no channel exists for the path, the server creates one.
 
 ### Multiple Sessions Per Channel
 
-Multiple CC sessions in the same project directory share the same channel. Each cc-plugin generates a **short random ID** (e.g., `a3f7`) on startup to distinguish itself.
+Multiple CC sessions in the same project directory share the same channel. Each session has a **short random ID** (e.g., `a3f7`) to distinguish itself.
 
 Replies in Discord are prefixed with the session ID:
 ```
@@ -255,53 +313,6 @@ Server state is stored in a JSON config file in the user's home directory (e.g.,
 
 A single server process reads/writes this file — no concurrent access concerns. Atomic writes (write to temp file, rename) prevent corruption on crash.
 
-## Activity Mirroring
-
-cc-hub mirrors CC session activity to Discord using two mechanisms:
-
-### Channel Plugin (bidirectional messaging)
-
-The cc-plugin handles user ↔ Claude conversation via MCP channel notifications and the `reply` tool.
-
-### Hooks (activity streaming)
-
-CC hooks (an official, stable interface) stream session activity to the server via HTTP POST. This gives Discord visibility into everything Claude is doing — not just channel messages.
-
-The server exposes an HTTP endpoint at `POST /hooks/activity` that receives hook events and forwards them to the appropriate Discord channel based on `cwd`.
-
-#### Supported hook events
-
-| Event | What Discord sees |
-|---|---|
-| UserPromptSubmit | User's prompt text |
-| PreToolUse | Tool about to execute (name + args) |
-| PostToolUse | Tool result (output preview) |
-| PostToolUseFailure | Tool error message |
-| Stop | Turn complete indicator |
-| SessionStart/End | Session lifecycle |
-| SubagentStart/Stop | Subagent activity |
-
-#### Hook configuration
-
-Users configure hooks in `~/.claude/settings.json`:
-
-```json
-{
-  "hooks": {
-    "PostToolUse": [{ "matcher": "", "hooks": [{ "type": "http", "url": "http://localhost:3001/hooks/activity" }] }],
-    "PreToolUse": [{ "matcher": "", "hooks": [{ "type": "http", "url": "http://localhost:3001/hooks/activity" }] }],
-    "UserPromptSubmit": [{ "matcher": "", "hooks": [{ "type": "http", "url": "http://localhost:3001/hooks/activity" }] }],
-    "Stop": [{ "matcher": "", "hooks": [{ "type": "http", "url": "http://localhost:3001/hooks/activity" }] }],
-    "SessionStart": [{ "matcher": "", "hooks": [{ "type": "http", "url": "http://localhost:3001/hooks/activity" }] }],
-    "SessionEnd": [{ "matcher": "", "hooks": [{ "type": "http", "url": "http://localhost:3001/hooks/activity" }] }]
-  }
-}
-```
-
-#### Why hooks instead of CLI output parsing
-
-Projects like Happy Coder parse Claude CLI stdout to mirror activity. This is fragile — CLI output format is not a stable API, and every CC update can break the parser. Hooks are an official, documented interface with structured JSON input, designed for external integrations.
-
 ## Message Formatting
 
 - **Chunking**: Split long messages at Discord's 2000-char limit, respecting markdown boundaries (don't split mid-code-block)
@@ -313,7 +324,7 @@ Projects like Happy Coder parse Claude CLI stdout to mirror activity. This is fr
 - **Language**: TypeScript
 - **MCP SDK**: `@modelcontextprotocol/sdk` (cc-plugin)
 - **Discord**: discord.js (server)
-- **WebSocket**: ws or Socket.IO (server ↔ cc-plugin/node-agent)
+- **WebSocket**: ws (server ↔ cc-plugin/node-agent)
 - **Validation**: Zod (shared message schemas)
 - **Testing**: Vitest (separate configs for unit, integration, and e2e)
 
@@ -335,7 +346,7 @@ npm run test:integration   # All integration tests
 npm run test:e2e           # All e2e tests
 ```
 
-All three components (server, cc-plugin, node-agent) live in a monorepo managed with npm workspaces or similar.
+All three components (server, cc-plugin, node-agent) live in a monorepo managed with npm workspaces.
 
 Note: Claude Code's official channel plugins use Bun, but this is a choice not a requirement. Any Node.js-compatible runtime works.
 
@@ -361,3 +372,19 @@ No message buffering. If a cc-plugin or node-agent is disconnected, messages sen
 A single server instance maps to a single Discord guild (server). Any user who can see a channel can send messages to the CC sessions in that channel. Access is controlled entirely by Discord's native channel permissions.
 
 Fine-grained roles (reader vs. speaker) can be added as a future enhancement.
+
+## Design Decisions
+
+### Why not parse CLI output?
+
+Projects like Happy Coder parse Claude CLI stdout to mirror terminal activity. This is fragile — CLI output format is not a stable API, and every CC update can break the parser. cc-hub avoids this by using official interfaces:
+- **MCP channel protocol** (Mode A) — documented, stable
+- **`--output-format stream-json`** (Mode B) — structured output format designed for programmatic consumption
+
+### Why not CC hooks for activity mirroring?
+
+CC hooks (PostToolUse, PreToolUse, etc.) can capture tool calls but **cannot capture Claude's text responses**. There is no hook event that provides the assistant's response text (open feature request [#37243](https://github.com/anthropics/claude-code/issues/37243)). This makes hooks insufficient for full activity mirroring. Mode B's headless approach with stream-json provides complete output instead.
+
+### Why two modes?
+
+Mode A (channel plugin) is lightweight and non-invasive — it adds Discord as a side channel to an existing terminal workflow. Mode B (headless) provides full mirroring but requires the node-agent and has no terminal access. Different use cases call for different tradeoffs.
