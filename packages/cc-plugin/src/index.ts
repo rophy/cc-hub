@@ -88,18 +88,24 @@ const bridgeClient = createBridgeClient({
   projectPath,
   log,
   onMessage: async (from: string, text: string, messageId?: string) => {
-    await mcp.notification({
-      method: "notifications/claude/channel",
-      params: {
-        content: text,
-        meta: {
-          source: "cc-hub",
-          chat_id: shortId,
-          user: from,
-          ...(messageId ? { message_id: messageId } : {}),
+    log.info("sending MCP channel notification");
+    try {
+      await mcp.notification({
+        method: "notifications/claude/channel",
+        params: {
+          content: text,
+          meta: {
+            source: "cc-hub",
+            chat_id: shortId,
+            user: from,
+            ...(messageId ? { message_id: messageId } : {}),
+          },
         },
-      },
-    });
+      });
+      log.info("MCP channel notification sent");
+    } catch (err) {
+      log.error({ err }, "MCP channel notification failed");
+    }
   },
 });
 
