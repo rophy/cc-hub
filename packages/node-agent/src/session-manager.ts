@@ -58,6 +58,7 @@ export class SessionManager {
       const child = spawn("claude", [
         "-p", prompt,
         "--continue",
+        "--dangerously-skip-permissions",
         "--output-format", "stream-json",
         "--verbose",
       ], {
