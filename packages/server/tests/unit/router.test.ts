@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { createRouter, toDiscordChannelName, type Router } from "../../src/router.js";
+import { createRouter, type Router } from "../../src/router.js";
+import { toDiscordChannelName } from "@cc-hub/shared";
 import type { ServerState } from "../../src/state.js";
 import type WebSocket from "ws";
 

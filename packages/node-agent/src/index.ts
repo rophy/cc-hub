@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { loadClientConfig, createLogger } from "@cc-hub/shared";
+import { loadClientConfig, createLogger, toDiscordChannelName } from "@cc-hub/shared";
 import { createAgentClient } from "./agent-client.js";
 import { SessionManager, getBusyChannels } from "./session-manager.js";
 import { generateShortId } from "./utils.js";
@@ -19,7 +19,7 @@ async function main() {
     getBusyChannels,
     onRunPrompt: async (projectPath, prompt) => {
       const { basename } = await import("node:path");
-      const channelName = basename(projectPath);
+      const channelName = toDiscordChannelName(basename(projectPath));
       return sessionManager.runPrompt(projectPath, prompt, channelName);
     },
   });
