@@ -120,16 +120,19 @@ async function main() {
         return;
       }
 
-      // Text responses from Claude — send as plain text like Mode A
-      if (event.eventType === "text" && event.text) {
-        discord.sendReply(event.channelName, event.shortId, event.text);
+      // Errors — send as embeds (control plane)
+      if (event.eventType === "error") {
+        const formatted = formatStreamEvent(event);
+        if (formatted) {
+          discord.postStatus(event.channelName, formatted.text, formatted.color);
+        }
         return;
       }
 
-      // Control plane events — send as embeds
+      // Claude Code output (text, tool calls, tool results) — send as plain text
       const formatted = formatStreamEvent(event);
       if (!formatted) return;
-      discord.postStatus(event.channelName, formatted.text, formatted.color);
+      discord.sendReply(event.channelName, event.shortId, formatted.text);
     },
   });
   log.info({ port: config.wsPort }, "WebSocket server listening");
