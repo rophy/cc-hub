@@ -56,6 +56,39 @@ docker compose up -d
 docker compose logs -f
 ```
 
+## cc-plugin Setup (Mode A)
+
+The cc-plugin is a Claude Code [channel plugin](https://code.claude.com/docs/en/channels-reference). It connects a local Claude Code session to cc-hub so Discord users can interact with it.
+
+### 1. Register the MCP server
+
+Add to `~/.claude.json`:
+
+```json
+{
+  "mcpServers": {
+    "cc-hub": {
+      "type": "stdio",
+      "command": "node",
+      "args": ["/path/to/cc-hub/packages/cc-plugin/dist/index.js"]
+    }
+  }
+}
+```
+
+### 2. Start Claude Code with the channel flag
+
+Channel plugins require `--dangerously-load-development-channels` during the research preview. Without this flag, the MCP server connects but channel notifications are silently ignored.
+
+```bash
+cd /path/to/your/project
+claude --dangerously-load-development-channels server:cc-hub
+```
+
+### 3. Verify
+
+Run `/mcp` in the session — cc-hub should show as connected with `experimental/claude/channel` capability.
+
 ## Key Conventions
 
 - TypeScript strict mode, ESM (`"type": "module"`)
