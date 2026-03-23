@@ -66,6 +66,8 @@ describe("WebSocket relay", () => {
       onPluginDisconnected(shortId, channelName) {
         disconnectLog.push({ shortId, channelName });
       },
+      onNodeAgentDisconnected() {},
+      onNodeAgentReconnected() {},
       onStreamEvent() {},
     });
   });

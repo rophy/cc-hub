@@ -54,6 +54,8 @@ describe("Mode B relay", () => {
       onPluginConnecting() { return true; },
       onPluginConnected() {},
       onPluginDisconnected() {},
+      onNodeAgentDisconnected() {},
+      onNodeAgentReconnected() {},
       onStreamEvent(event) {
         streamLog.push(event);
       },
@@ -187,6 +189,8 @@ describe("Mode B relay", () => {
       },
       onPluginConnected() {},
       onPluginDisconnected() {},
+      onNodeAgentDisconnected() {},
+      onNodeAgentReconnected() {},
       onStreamEvent() {},
     });
 

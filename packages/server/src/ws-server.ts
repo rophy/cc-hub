@@ -26,6 +26,10 @@ export interface WsServerEvents {
   onPluginConnected(shortId: string, channelName: string): void;
   /** Called when a cc-plugin disconnects */
   onPluginDisconnected(shortId: string, channelName: string): void;
+  /** Called when a node-agent disconnects */
+  onNodeAgentDisconnected(shortId: string): void;
+  /** Called when a node-agent reconnects */
+  onNodeAgentReconnected(shortId: string): void;
   /** Called when a node-agent streams an event (Mode B) */
   onStreamEvent(event: NodeStreamEventParams): void;
 }
@@ -76,6 +80,12 @@ export function createWebSocketServer(
       const info = router.onPluginDisconnect(ws);
       if (info) {
         events.onPluginDisconnected(info.shortId, info.channelName);
+      }
+      // Check if this was a node-agent
+      const agents = router.getNodeAgents();
+      const agentBefore = agents.find((a) => a.ws === ws);
+      if (agentBefore) {
+        events.onNodeAgentDisconnected(agentBefore.shortId);
       }
       router.removeNodeAgent(ws);
     });
@@ -221,6 +231,7 @@ export function createWebSocketServer(
         shortId: params.shortId,
         hostname: params.hostname,
       });
+      events.onNodeAgentReconnected(params.shortId);
       ws.send(
         JSON.stringify(
           createRequest("auth.identified", { ok: true }, ++requestIdCounter),

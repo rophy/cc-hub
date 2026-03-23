@@ -349,7 +349,7 @@ No message buffering. If a cc-plugin or node-agent is disconnected, messages sen
 | Headless prompt finishes (Mode B) | Process exits. Node-agent sends session_end. Channel freed. |
 | Network blip | Plugin/agent auto-reconnects (5s delay). |
 | Server restarts | All connections drop. Clients reconnect. Server reloads state from JSON file. |
-| Node-agent disconnects | Pending prompts fail. Busy channels may remain stuck until server restart (known limitation). |
+| Node-agent disconnects | Pending prompts fail. Busy channels cleared after configurable timeout (`CC_HUB_DISCONNECT_TIMEOUT`, default 30s). If agent reconnects before timeout, busy state is preserved. |
 
 ## Access Control
 

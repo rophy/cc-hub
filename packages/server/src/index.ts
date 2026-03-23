@@ -9,6 +9,7 @@ import { loadState, saveState } from "./state.js";
 
 const WS_PORT = parseInt(process.env.CC_HUB_WS_PORT || "3000", 10);
 const DISCORD_TOKEN = process.env.DISCORD_TOKEN;
+const DISCONNECT_TIMEOUT_MS = parseInt(process.env.CC_HUB_DISCONNECT_TIMEOUT || "30000", 10);
 
 if (!DISCORD_TOKEN) {
   console.error("DISCORD_TOKEN environment variable is required");
@@ -22,6 +23,7 @@ async function main() {
 
   // Channels currently processing a headless prompt
   const busyChannels = new Set<string>();
+  let disconnectTimer: ReturnType<typeof setTimeout> | null = null;
 
   function hasActiveSession(channelName: string): boolean {
     if (router.getPluginsForChannel(channelName).length > 0) return true;
@@ -80,6 +82,22 @@ async function main() {
     },
     onPluginDisconnected(shortId, channelName) {
       discord.postStatus(channelName, `*[${shortId}] session ended*`);
+    },
+
+    // Node-agent lifecycle
+    onNodeAgentDisconnected(_shortId) {
+      // Start timeout — if agent doesn't reconnect, clear busy channels
+      disconnectTimer = setTimeout(() => {
+        busyChannels.clear();
+        console.log("Node-agent disconnect timeout — busy channels cleared");
+      }, DISCONNECT_TIMEOUT_MS);
+    },
+    onNodeAgentReconnected(_shortId) {
+      // Cancel disconnect timeout — agent is back
+      if (disconnectTimer) {
+        clearTimeout(disconnectTimer);
+        disconnectTimer = null;
+      }
     },
 
     // Mode B: node-agent stream events
