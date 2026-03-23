@@ -6,3 +6,11 @@ export function parseTargetPrefix(text: string): [string | undefined, string] {
   }
   return [undefined, text];
 }
+
+/** Strip Discord @mention from message. Returns [isMention, strippedText] */
+export function parseMention(content: string, botId: string): [boolean, string] {
+  const regex = new RegExp(`^<@!?${botId}>\\s*`);
+  const isMention = regex.test(content);
+  const text = content.replace(regex, "").trim();
+  return [isMention, text];
+}
