@@ -6,13 +6,12 @@ import { createRouter } from "./router.js";
 import { createAuthManager } from "./auth.js";
 import { formatStreamEvent } from "./stream-formatter.js";
 import { loadState, saveState } from "./state.js";
+import { loadServerConfig } from "@cc-hub/shared";
 
-const WS_PORT = parseInt(process.env.CC_HUB_WS_PORT || "3000", 10);
-const DISCORD_TOKEN = process.env.DISCORD_TOKEN;
-const DISCONNECT_TIMEOUT_MS = parseInt(process.env.CC_HUB_DISCONNECT_TIMEOUT || "30000", 10);
+const config = loadServerConfig();
 
-if (!DISCORD_TOKEN) {
-  console.error("DISCORD_TOKEN environment variable is required");
+if (!config.discordToken) {
+  console.error("DISCORD_TOKEN not found. Set it via environment variable or in ~/.cc-hub/config.json (discordToken field).");
   process.exit(1);
 }
 
@@ -32,7 +31,7 @@ async function main() {
   }
 
   // Discord bot
-  const discord = await createDiscordBot(DISCORD_TOKEN!, router, auth, {
+  const discord = await createDiscordBot(config.discordToken, router, auth, {
     hasActiveSession,
 
     onUserMessage(channelName, from, text, messageId) {
@@ -69,7 +68,7 @@ async function main() {
   console.log("Discord bot connected");
 
   // WebSocket server
-  const wsServer = createWebSocketServer(WS_PORT, router, auth, {
+  const wsServer = createWebSocketServer(config.wsPort, router, auth, {
     // Mode A: cc-plugin
     onCcReply(shortId, channelName, text, _files) {
       discord.sendReply(channelName, shortId, text);
@@ -90,7 +89,7 @@ async function main() {
       disconnectTimer = setTimeout(() => {
         busyChannels.clear();
         console.log("Node-agent disconnect timeout — busy channels cleared");
-      }, DISCONNECT_TIMEOUT_MS);
+      }, config.disconnectTimeoutMs);
     },
     onNodeAgentReconnected(_shortId, agentBusyChannels) {
       // Cancel disconnect timeout — agent is back
@@ -125,7 +124,7 @@ async function main() {
       discord.postStatus(event.channelName, message);
     },
   });
-  console.log(`WebSocket server listening on port ${WS_PORT}`);
+  console.log(`WebSocket server listening on port ${config.wsPort}`);
 
   process.on("SIGINT", () => {
     console.log("Shutting down...");

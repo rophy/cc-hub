@@ -7,6 +7,12 @@ export interface ClientConfig {
   token: string;
 }
 
+export interface ServerConfig {
+  discordToken: string;
+  wsPort: number;
+  disconnectTimeoutMs: number;
+}
+
 const CONFIG_DIR = join(homedir(), ".cc-hub");
 const CONFIG_FILE = join(CONFIG_DIR, "config.json");
 
@@ -25,6 +31,25 @@ export function loadClientConfig(): ClientConfig {
   return {
     serverUrl: serverUrl || fileConfig.serverUrl || "ws://localhost:3000",
     token: token || fileConfig.token || "",
+  };
+}
+
+export function loadServerConfig(): ServerConfig {
+  const discordToken = process.env.DISCORD_TOKEN;
+  const wsPort = process.env.CC_HUB_WS_PORT;
+  const disconnectTimeout = process.env.CC_HUB_DISCONNECT_TIMEOUT;
+
+  let fileConfig: Partial<ServerConfig> = {};
+  try {
+    fileConfig = JSON.parse(readFileSync(CONFIG_FILE, "utf-8"));
+  } catch {
+    // no config file yet
+  }
+
+  return {
+    discordToken: discordToken || (fileConfig as Record<string, string>).discordToken || "",
+    wsPort: wsPort ? parseInt(wsPort, 10) : 3000,
+    disconnectTimeoutMs: disconnectTimeout ? parseInt(disconnectTimeout, 10) : 30000,
   };
 }
 

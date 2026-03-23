@@ -46,10 +46,23 @@ git clone https://github.com/rophy/cc-hub.git
 cd cc-hub
 npm install
 npm run build
-DISCORD_TOKEN=<your-bot-token> node packages/server/dist/index.js
 ```
 
-Or with Docker:
+Save your Discord bot token to `~/.cc-hub/config.json`:
+
+```json
+{
+  "discordToken": "<your-bot-token>"
+}
+```
+
+Then start the server:
+
+```bash
+node packages/server/dist/index.js
+```
+
+Or with Docker (pass token via env var):
 
 ```bash
 docker build -t cc-hub-server .
