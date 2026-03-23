@@ -16,6 +16,7 @@ import {
 } from "@cc-hub/shared";
 import type { Router } from "./router.js";
 import type { AuthManager } from "./auth.js";
+import type { Logger } from "pino";
 
 export interface WsServerEvents {
   /** Called when a cc-plugin sends a reply (Mode A) */
@@ -57,8 +58,10 @@ export function createWebSocketServer(
   port: number,
   router: Router,
   auth: AuthManager,
+  parentLog: Logger,
   events: WsServerEvents,
 ): WsServerHandle {
+  const log = parentLog.child({ component: "ws" });
   const wss = new WebSocketServer({ port });
   let requestIdCounter = 0;
 
@@ -213,6 +216,7 @@ export function createWebSocketServer(
         return;
       }
 
+      log.info({ shortId: params.shortId, channelName, projectPath: params.projectPath }, "plugin registered");
       router.addPlugin({
         ws,
         shortId: params.shortId,
@@ -250,7 +254,9 @@ export function createWebSocketServer(
       if (targetShortId) {
         plugins = plugins.filter((p) => p.shortId === targetShortId);
       }
+      log.debug({ channel: channelName, pluginCount: plugins.length }, "sending to channel");
       for (const plugin of plugins) {
+        log.debug({ shortId: plugin.shortId, readyState: plugin.ws.readyState }, "forwarding to plugin");
         const msg = createRequest(
           CC_MESSAGE_METHOD,
           { from, text, messageId },

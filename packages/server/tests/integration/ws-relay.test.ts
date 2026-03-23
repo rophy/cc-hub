@@ -1,9 +1,12 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import WebSocket from "ws";
+import pino from "pino";
 import { createWebSocketServer, type WsServerHandle } from "../../src/ws-server.js";
 import { createRouter, type Router } from "../../src/router.js";
 import { createAuthManager, type AuthManager } from "../../src/auth.js";
 import type { ServerState } from "../../src/state.js";
+
+const log = pino({ name: "test" });
 import {
   createRequest,
   createNotification,
@@ -53,7 +56,7 @@ describe("WebSocket relay", () => {
     testToken = auth.generateToken();
     state.machines.push({ token: testToken, pairedAt: new Date().toISOString() });
 
-    server = createWebSocketServer(TEST_PORT, router, auth, {
+    server = createWebSocketServer(TEST_PORT, router, auth, log, {
       onCcReply(shortId, channelName, text) {
         replyLog.push({ shortId, channelName, text });
       },

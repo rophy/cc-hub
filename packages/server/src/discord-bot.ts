@@ -12,6 +12,7 @@ import {
 } from "discord.js";
 import type { Router } from "./router.js";
 import type { AuthManager } from "./auth.js";
+import type { Logger } from "pino";
 
 const MAX_MESSAGE_LENGTH = 2000;
 
@@ -45,8 +46,11 @@ export async function createDiscordBot(
   token: string,
   router: Router,
   auth: AuthManager,
+  parentLog: Logger,
   events: DiscordBotEvents,
 ): Promise<DiscordBotHandle> {
+  const log = parentLog.child({ component: "discord" });
+
   const client = new Client({
     intents: [
       GatewayIntentBits.Guilds,
@@ -119,6 +123,8 @@ export async function createDiscordBot(
       ? message.content.replace(mentionRegex, "").trim()
       : message.content.trim();
 
+    log.debug({ channel: channelName, user: message.author.username, isMention, content: message.content.slice(0, 100) }, "message received");
+
     // Require @mention for all interactions
     if (!isMention) return;
     if (!text) return;
@@ -127,6 +133,7 @@ export async function createDiscordBot(
 
     // If channel has an active session, route the message
     if (discordId && events.hasActiveSession(channelName)) {
+      log.debug({ channel: channelName }, "routing to active session");
       events.onUserMessage(channelName, from, text, message.id);
       return;
     }
@@ -136,19 +143,20 @@ export async function createDiscordBot(
       // Look up project path from channel mapping
       const projectPath = getProjectPathForChannel(channelName);
       if (!projectPath) {
+        log.warn({ channel: channelName }, "no project path for channel");
         await message.reply("No project path mapped for this channel. Use a channel created by cc-hub.");
         return;
       }
 
+      log.info({ channel: channelName, projectPath }, "starting headless Mode B");
       const result = await events.onStartHeadless(channelName, projectPath, text);
       if (!result.ok) {
+        log.error({ channel: channelName, error: result.error }, "headless start failed");
         await message.reply(`Failed to start session: ${result.error}`);
       }
       // Success — stream events will appear in this channel
       return;
     }
-
-    // Not a mention and no active session — ignore
   });
 
   function getProjectPathForChannel(channelName: string): string | undefined {

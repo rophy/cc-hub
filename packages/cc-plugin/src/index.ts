@@ -6,13 +6,20 @@ import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
-import { loadClientConfig } from "@cc-hub/shared";
+import { join } from "node:path";
+import { homedir } from "node:os";
+import { loadClientConfig, createLogger } from "@cc-hub/shared";
 import { createBridgeClient } from "./bridge-client.js";
 import { generateShortId } from "./utils.js";
 
 const shortId = generateShortId();
 const projectPath = process.cwd();
 const config = loadClientConfig();
+const log = createLogger({
+  name: "cc-plugin",
+  transport: "file",
+  filePath: join(homedir(), ".cc-hub", `cc-plugin-${shortId}.log`),
+});
 
 // MCP Server setup
 const mcp = new Server(
@@ -79,6 +86,7 @@ const bridgeClient = createBridgeClient({
   token: config.token,
   shortId,
   projectPath,
+  log,
   onMessage: async (from: string, text: string, messageId?: string) => {
     await mcp.notification({
       method: "notifications/claude/channel",
@@ -103,6 +111,6 @@ async function main() {
 }
 
 main().catch((err) => {
-  console.error("cc-hub plugin failed to start:", err);
+  log.fatal({ err }, "cc-hub plugin failed to start");
   process.exit(1);
 });

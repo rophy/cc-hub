@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { loadClientConfig } from "@cc-hub/shared";
+import { loadClientConfig, createLogger } from "@cc-hub/shared";
 import { createAgentClient } from "./agent-client.js";
 import { SessionManager, getBusyChannels } from "./session-manager.js";
 import { generateShortId } from "./utils.js";
@@ -8,6 +8,7 @@ import { hostname } from "node:os";
 
 const config = loadClientConfig();
 const shortId = generateShortId();
+const log = createLogger({ name: "node-agent", transport: "stdout" });
 
 async function main() {
   const client = createAgentClient({
@@ -30,15 +31,15 @@ async function main() {
   });
 
   await client.connect();
-  console.log(`Node agent [${shortId}] connected to ${config.serverUrl}`);
+  log.info({ shortId, serverUrl: config.serverUrl }, "connected");
 
   process.on("SIGINT", () => {
-    console.log("Shutting down node agent...");
+    log.info("shutting down");
     process.exit(0);
   });
 }
 
 main().catch((err) => {
-  console.error("Node agent failed to start:", err);
+  log.fatal({ err }, "failed to start");
   process.exit(1);
 });

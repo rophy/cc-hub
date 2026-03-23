@@ -10,16 +10,19 @@ import {
   type JsonRpcMessage,
   type JsonRpcRequest,
 } from "@cc-hub/shared";
+import type { Logger } from "pino";
 
 export interface BridgeClientOptions {
   serverUrl: string;
   token: string;
   shortId: string;
   projectPath: string;
+  log: Logger;
   onMessage: (from: string, text: string, messageId?: string) => Promise<void>;
 }
 
 export function createBridgeClient(options: BridgeClientOptions) {
+  const log = options.log;
   let ws: WebSocket | null = null;
   let requestId = 0;
   let currentToken = options.token;
@@ -73,10 +76,12 @@ export function createBridgeClient(options: BridgeClientOptions) {
       if ("result" in msg) {
         const result = msg.result as { needsPairing?: boolean; pairingCode?: string };
         if (result?.needsPairing && result?.pairingCode) {
-          console.error(
+          log.info({ pairingCode: result.pairingCode }, "pairing required — ask someone to run /pair in Discord");
+          // Also write to stderr so user sees it in terminal during initial setup
+          process.stderr.write(
             `\n[cc-hub] Pairing required. Ask someone to run in Discord:\n` +
             `  !pair ${result.pairingCode}\n` +
-            `Waiting for approval...\n`,
+            `Waiting for approval...\n\n`,
           );
         }
       }
@@ -90,7 +95,7 @@ export function createBridgeClient(options: BridgeClientOptions) {
       const params = request.params as { token: string };
       currentToken = params.token;
       saveClientConfig({ token: params.token });
-      console.error("[cc-hub] Paired successfully. Token saved.");
+      log.info("paired successfully, token saved");
     }
 
     // Server confirms registration
@@ -98,7 +103,7 @@ export function createBridgeClient(options: BridgeClientOptions) {
       const params = request.params as { ok: boolean; channel?: string };
       if (params.ok) {
         if (params.channel) {
-          console.error(`[cc-hub] Connected to channel: ${params.channel}`);
+          log.info({ channel: params.channel }, "connected to channel");
         }
         onReady();
       }
@@ -108,7 +113,12 @@ export function createBridgeClient(options: BridgeClientOptions) {
     if (request.method === CC_MESSAGE_METHOD) {
       const parsed = CcMessageParamsSchema.safeParse(request.params);
       if (parsed.success) {
-        options.onMessage(parsed.data.from, parsed.data.text, parsed.data.messageId);
+        log.info({ from: parsed.data.from, text: parsed.data.text.slice(0, 100) }, "received message");
+        options.onMessage(parsed.data.from, parsed.data.text, parsed.data.messageId)
+          .then(() => log.debug("MCP notification sent"))
+          .catch((err) => log.error({ err }, "MCP notification failed"));
+      } else {
+        log.error({ error: parsed.error }, "failed to parse message");
       }
     }
   }

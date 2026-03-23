@@ -6,12 +6,13 @@ import { createRouter } from "./router.js";
 import { createAuthManager } from "./auth.js";
 import { formatStreamEvent } from "./stream-formatter.js";
 import { loadState, saveState } from "./state.js";
-import { loadServerConfig } from "@cc-hub/shared";
+import { loadServerConfig, createLogger } from "@cc-hub/shared";
 
+const log = createLogger({ name: "server", transport: "stdout" });
 const config = loadServerConfig();
 
 if (!config.discordToken) {
-  console.error("DISCORD_TOKEN not found. Set it via environment variable or in ~/.cc-hub/config.json (discordToken field).");
+  log.fatal("DISCORD_TOKEN not found. Set it via environment variable or in ~/.cc-hub/config.json (discordToken field).");
   process.exit(1);
 }
 
@@ -31,7 +32,7 @@ async function main() {
   }
 
   // Discord bot
-  const discord = await createDiscordBot(config.discordToken, router, auth, {
+  const discord = await createDiscordBot(config.discordToken, router, auth, log, {
     hasActiveSession,
 
     onUserMessage(channelName, from, text, messageId) {
@@ -65,10 +66,10 @@ async function main() {
       return { ok: true };
     },
   });
-  console.log("Discord bot connected");
+  log.info("Discord bot connected");
 
   // WebSocket server
-  const wsServer = createWebSocketServer(config.wsPort, router, auth, {
+  const wsServer = createWebSocketServer(config.wsPort, router, auth, log, {
     // Mode A: cc-plugin
     onCcReply(shortId, channelName, text, _files) {
       discord.sendReply(channelName, shortId, text);
@@ -88,7 +89,7 @@ async function main() {
       // Start timeout — if agent doesn't reconnect, clear busy channels
       disconnectTimer = setTimeout(() => {
         busyChannels.clear();
-        console.log("Node-agent disconnect timeout — busy channels cleared");
+        log.warn("Node-agent disconnect timeout — busy channels cleared");
       }, config.disconnectTimeoutMs);
     },
     onNodeAgentReconnected(_shortId, agentBusyChannels) {
@@ -124,10 +125,10 @@ async function main() {
       discord.postStatus(event.channelName, message);
     },
   });
-  console.log(`WebSocket server listening on port ${config.wsPort}`);
+  log.info({ port: config.wsPort }, "WebSocket server listening");
 
   process.on("SIGINT", () => {
-    console.log("Shutting down...");
+    log.info("Shutting down...");
     wsServer.close();
     discord.destroy();
     process.exit(0);
@@ -135,6 +136,6 @@ async function main() {
 }
 
 main().catch((err) => {
-  console.error("Server failed to start:", err);
+  log.fatal({ err }, "Server failed to start");
   process.exit(1);
 });
