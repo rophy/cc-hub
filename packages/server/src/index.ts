@@ -78,10 +78,10 @@ async function main() {
       return !hasActiveSession(channelName);
     },
     onPluginConnected(shortId, channelName) {
-      discord.postStatus(channelName, `*[${shortId}] session connected*`);
+      discord.postStatus(channelName, `🟢 **[${shortId}]** session connected`, 0x00cc00);
     },
     onPluginDisconnected(shortId, channelName) {
-      discord.postStatus(channelName, `*[${shortId}] session ended*`);
+      discord.postStatus(channelName, `🔴 **[${shortId}]** session ended`, 0x888888);
     },
 
     // Node-agent lifecycle
@@ -120,9 +120,9 @@ async function main() {
         return; // Don't post "session ended" to Discord
       }
 
-      const message = formatStreamEvent(event);
-      if (!message) return;
-      discord.postStatus(event.channelName, message);
+      const formatted = formatStreamEvent(event);
+      if (!formatted) return;
+      discord.postStatus(event.channelName, formatted.text, formatted.color);
     },
   });
   log.info({ port: config.wsPort }, "WebSocket server listening");

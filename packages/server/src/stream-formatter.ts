@@ -7,11 +7,20 @@ function truncate(text: string, max = MAX_PREVIEW): string {
   return text.slice(0, max) + "…";
 }
 
+export interface FormattedEvent {
+  text: string;
+  color: number;
+}
+
+const COLOR_GREEN = 0x00cc00;
+const COLOR_RED = 0xcc0000;
+const COLOR_GREY = 0x888888;
+
 /** Format a stream event for Discord display. Returns null to skip. */
-export function formatStreamEvent(event: NodeStreamEventParams): string | null {
+export function formatStreamEvent(event: NodeStreamEventParams): FormattedEvent | null {
   switch (event.eventType) {
     case "text":
-      return event.text || null;
+      return event.text ? { text: event.text, color: COLOR_GREY } : null;
 
     case "tool_call": {
       const input = event.toolInput || {};
@@ -23,27 +32,24 @@ export function formatStreamEvent(event: NodeStreamEventParams): string | null {
       } else {
         detail = truncate(JSON.stringify(input), 150);
       }
-      return `🔧 **${event.toolName}** ${detail}`;
+      return { text: `🔧 **${event.toolName}** ${detail}`, color: COLOR_GREY };
     }
 
     case "tool_result": {
       if (!event.toolResult) return null;
       const trimmed = event.toolResult.trim();
       if (!trimmed) return null;
-      if (trimmed.length <= 200) {
-        return `\`\`\`\n${trimmed}\n\`\`\``;
-      }
-      return `\`\`\`\n${truncate(trimmed, 200)}\n\`\`\``;
+      return { text: `\`\`\`\n${truncate(trimmed, 200)}\n\`\`\``, color: COLOR_GREY };
     }
 
     case "error":
-      return `❌ **Error**: ${truncate(event.text ?? "unknown", 200)}`;
+      return { text: `❌ ${truncate(event.text ?? "unknown", 200)}`, color: COLOR_RED };
 
     case "session_start":
-      return `🟢 *${event.text ?? "Session started"}*`;
+      return { text: `🟢 ${event.text ?? "Session started"}`, color: COLOR_GREEN };
 
     case "session_end":
-      return `🔴 *${event.text ?? "Session ended"}*`;
+      return null; // Don't post session_end to Discord
 
     default:
       return null;

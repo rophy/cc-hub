@@ -1,5 +1,6 @@
 import {
   Client,
+  EmbedBuilder,
   GatewayIntentBits,
   ChannelType,
   SlashCommandBuilder,
@@ -38,8 +39,8 @@ export interface DiscordBotHandle {
   destroy(): void;
   /** Send a message to a Discord channel, prefixed with session short ID */
   sendReply(channelName: string, shortId: string, text: string): Promise<void>;
-  /** Post a status message */
-  postStatus(channelName: string, text: string): Promise<void>;
+  /** Post a control plane status message as an embed */
+  postStatus(channelName: string, text: string, color: number): Promise<void>;
 }
 
 export async function createDiscordBot(
@@ -217,10 +218,11 @@ export async function createDiscordBot(
       }
     },
 
-    async postStatus(channelName, text) {
+    async postStatus(channelName, text, color) {
       const channel = await findOrCreateChannel(channelName);
       if (!channel) return;
-      await channel.send(text);
+      const embed = new EmbedBuilder().setDescription(text).setColor(color);
+      await channel.send({ embeds: [embed] });
     },
   };
 }
