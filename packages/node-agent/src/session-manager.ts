@@ -15,7 +15,6 @@ interface ManagedSession {
   projectPath: string;
   ccSessionId?: string;
   process: ChildProcess | null;
-  /** Accumulated text for batching */
   textBuffer: string;
   textFlushTimer: ReturnType<typeof setTimeout> | null;
 }
@@ -23,7 +22,7 @@ interface ManagedSession {
 export class SessionManager {
   private sessions = new Map<string, ManagedSession>();
   private events: SessionEvents;
-  private static TEXT_FLUSH_INTERVAL = 500; // ms
+  private static TEXT_FLUSH_INTERVAL = 500;
 
   constructor(events: SessionEvents) {
     this.events = events;
@@ -50,7 +49,7 @@ export class SessionManager {
       shortId,
       channelName,
       eventType: "session_start",
-      text: `Session started in ${projectPath}`,
+      text: `Session started in \`${projectPath}\``,
     });
 
     try {
@@ -96,9 +95,12 @@ export class SessionManager {
         "--output-format", "stream-json",
       ];
 
-      // Resume existing session if we have a CC session ID
       if (session.ccSessionId) {
+        // Resume the specific session
         args.push("--resume", session.ccSessionId);
+      } else {
+        // First message — continue the latest session in this directory
+        args.push("--continue");
       }
 
       const child = spawn("claude", args, {
@@ -131,7 +133,6 @@ export class SessionManager {
               break;
 
             case "tool_call":
-              // Flush any pending text before tool call
               this.flushText(session);
               this.events.onStreamEvent({
                 shortId: session.shortId,
@@ -164,7 +165,6 @@ export class SessionManager {
         }
       });
 
-      // Capture stderr for errors
       let stderr = "";
       child.stderr?.on("data", (data) => {
         stderr += data.toString();
@@ -197,10 +197,8 @@ export class SessionManager {
     });
   }
 
-  /** Buffer text deltas and flush periodically to avoid spamming Discord */
   private bufferText(session: ManagedSession, text: string): void {
     session.textBuffer += text;
-
     if (!session.textFlushTimer) {
       session.textFlushTimer = setTimeout(() => {
         this.flushText(session);
@@ -247,7 +245,6 @@ export class SessionManager {
     return this.sessions.get(shortId);
   }
 
-  /** Get all sessions for a channel */
   getSessionsForChannel(channelName: string): ManagedSession[] {
     return Array.from(this.sessions.values()).filter(
       (s) => s.channelName === channelName,

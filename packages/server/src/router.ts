@@ -36,6 +36,8 @@ export interface Router {
   getDiscordChannelId(channelName: string): string | undefined;
   /** Set Discord channel ID for a channel name */
   setDiscordChannelId(channelName: string, discordChannelId: string): void;
+  /** Get project path for a channel name */
+  getProjectPathForChannel(channelName: string): string | undefined;
   /** Get all connected node agents */
   getNodeAgents(): ConnectedNodeAgent[];
   /** Called when a plugin disconnects — returns channel name for status message */
@@ -112,6 +114,10 @@ export function createRouter(
     resolveChannel,
     getDiscordChannelId,
     setDiscordChannelId,
+    getProjectPathForChannel(channelName) {
+      const mapping = state.channels.find((c) => c.channelName === channelName);
+      return mapping?.projectPath;
+    },
     getNodeAgents() {
       return Array.from(nodeAgents.values());
     },

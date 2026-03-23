@@ -57,12 +57,16 @@ describe("WebSocket relay", () => {
       onCcReply(shortId, channelName, text) {
         replyLog.push({ shortId, channelName, text });
       },
+      onPluginConnecting() {
+        return true; // Allow all in tests
+      },
       onPluginConnected(shortId, channelName) {
         connectLog.push({ shortId, channelName });
       },
       onPluginDisconnected(shortId, channelName) {
         disconnectLog.push({ shortId, channelName });
       },
+      onStreamEvent() {},
     });
   });
 

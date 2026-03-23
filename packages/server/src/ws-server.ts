@@ -20,7 +20,9 @@ import type { AuthManager } from "./auth.js";
 export interface WsServerEvents {
   /** Called when a cc-plugin sends a reply (Mode A) */
   onCcReply(shortId: string, channelName: string, text: string, files?: string[]): void;
-  /** Called when a cc-plugin connects */
+  /** Called when a cc-plugin wants to connect. Return false to reject. */
+  onPluginConnecting(shortId: string, channelName: string): boolean;
+  /** Called when a cc-plugin connects successfully */
   onPluginConnected(shortId: string, channelName: string): void;
   /** Called when a cc-plugin disconnects */
   onPluginDisconnected(shortId: string, channelName: string): void;
@@ -185,6 +187,21 @@ export function createWebSocketServer(
   ): void {
     if (params.clientType === "cc-plugin") {
       const channelName = router.resolveChannel(params.projectPath || process.cwd());
+
+      // Single session enforcement
+      if (!events.onPluginConnecting(params.shortId, channelName)) {
+        ws.send(
+          JSON.stringify(
+            createResponse(0, undefined, {
+              code: -3,
+              message: `Channel "${channelName}" already has an active session`,
+            }),
+          ),
+        );
+        ws.close();
+        return;
+      }
+
       router.addPlugin({
         ws,
         shortId: params.shortId,

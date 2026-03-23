@@ -6,17 +6,17 @@ import { createRouter } from "./router.js";
 import { createAuthManager } from "./auth.js";
 import { formatStreamEvent } from "./stream-formatter.js";
 import { loadState, saveState } from "./state.js";
-import { parseTargetPrefix } from "./message-utils.js";
 import { createRequest } from "@cc-hub/shared";
 
 const WS_PORT = parseInt(process.env.CC_HUB_WS_PORT || "3000", 10);
-let requestIdCounter = 0;
 const DISCORD_TOKEN = process.env.DISCORD_TOKEN;
 
 if (!DISCORD_TOKEN) {
   console.error("DISCORD_TOKEN environment variable is required");
   process.exit(1);
 }
+
+let requestIdCounter = 0;
 
 async function main() {
   const state = loadState();
@@ -26,39 +26,47 @@ async function main() {
   // Track active Mode B sessions: shortId → channelName
   const modeBSessions = new Map<string, string>();
 
+  function hasActiveSession(channelName: string): boolean {
+    // Check Mode A (cc-plugin)
+    if (router.getPluginsForChannel(channelName).length > 0) return true;
+    // Check Mode B (headless)
+    for (const ch of modeBSessions.values()) {
+      if (ch === channelName) return true;
+    }
+    return false;
+  }
+
   // Discord bot
   const discord = await createDiscordBot(DISCORD_TOKEN!, router, auth, {
-    onUserMessage(channelName, from, text, messageId) {
-      const [targetShortId, message] = parseTargetPrefix(text);
+    hasActiveSession,
 
-      // Try Mode A first (cc-plugin connections)
+    onUserMessage(channelName, from, text, messageId) {
+      // Route to Mode A if available
       const plugins = router.getPluginsForChannel(channelName);
       if (plugins.length > 0) {
-        wsServer.sendToChannel(channelName, from, message, messageId, targetShortId);
+        wsServer.sendToChannel(channelName, from, text, messageId);
         return;
       }
 
-      // Try Mode B (node-agent sessions)
-      if (targetShortId) {
-        wsServer.sendToNodeSession(targetShortId, from, message);
-      } else {
-        // Find first Mode B session for this channel
-        for (const [shortId, ch] of modeBSessions) {
-          if (ch === channelName) {
-            wsServer.sendToNodeSession(shortId, from, message);
-            break;
-          }
+      // Route to Mode B
+      for (const [shortId, ch] of modeBSessions) {
+        if (ch === channelName) {
+          wsServer.sendToNodeSession(shortId, from, text);
+          return;
         }
       }
     },
-    async onStartSession(channelName, projectPath, prompt) {
-      // Find a node-agent to handle this
+
+    async onStartHeadless(channelName, projectPath, prompt) {
+      if (hasActiveSession(channelName)) {
+        return { ok: false, error: "Channel already has an active session" };
+      }
+
       const agents = router.getNodeAgents();
       if (agents.length === 0) {
         return { ok: false, error: "No node-agents connected" };
       }
 
-      // Send start_session to first available agent
       return new Promise((resolve) => {
         const agent = agents[0];
         const id = ++requestIdCounter;
@@ -69,7 +77,6 @@ async function main() {
           channelName,
         }, id);
 
-        // Listen for response
         const onMessage = (data: unknown) => {
           try {
             const resp = JSON.parse(String(data));
@@ -86,10 +93,9 @@ async function main() {
         agent.ws.on("message", onMessage);
         agent.ws.send(JSON.stringify(msg));
 
-        // Timeout after 10s
         setTimeout(() => {
           agent.ws.removeListener("message", onMessage);
-          resolve({ ok: false, error: "Timeout waiting for node-agent response" });
+          resolve({ ok: false, error: "Timeout waiting for node-agent" });
         }, 10000);
       });
     },
@@ -98,9 +104,12 @@ async function main() {
 
   // WebSocket server
   const wsServer = createWebSocketServer(WS_PORT, router, auth, {
-    // Mode A: cc-plugin reply
+    // Mode A: cc-plugin
     onCcReply(shortId, channelName, text, _files) {
       discord.sendReply(channelName, shortId, text);
+    },
+    onPluginConnecting(shortId, channelName) {
+      return !hasActiveSession(channelName);
     },
     onPluginConnected(shortId, channelName) {
       discord.postStatus(channelName, `*[${shortId}] session connected*`);
@@ -108,6 +117,7 @@ async function main() {
     onPluginDisconnected(shortId, channelName) {
       discord.postStatus(channelName, `*[${shortId}] session ended*`);
     },
+
     // Mode B: node-agent stream events
     onStreamEvent(event) {
       const message = formatStreamEvent(event);
@@ -116,12 +126,12 @@ async function main() {
       const channelName = event.channelName;
       if (!channelName) return;
 
-      // Prefix with session ID for multi-session channels
-      const prefixed = event.eventType === "text"
-        ? `**[${event.shortId}]** ${message}`
-        : message;
+      // Clean up ended sessions
+      if (event.eventType === "session_end") {
+        modeBSessions.delete(event.shortId);
+      }
 
-      discord.postStatus(channelName, prefixed);
+      discord.postStatus(channelName, message);
     },
   });
   console.log(`WebSocket server listening on port ${WS_PORT}`);

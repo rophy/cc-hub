@@ -16,26 +16,28 @@ import type { AuthManager } from "./auth.js";
 const MAX_MESSAGE_LENGTH = 2000;
 
 export interface DiscordBotEvents {
-  /** Called when a user sends a message in a mapped channel */
+  /** Called when a user sends a message to an active session */
   onUserMessage(
     channelName: string,
     from: string,
     text: string,
     messageId: string,
   ): void;
-  /** Called when a user runs /start to create a headless session */
-  onStartSession(
+  /** Called when a user @mentions the bot and no session exists — start headless */
+  onStartHeadless(
     channelName: string,
     projectPath: string,
     prompt: string,
   ): Promise<{ ok: boolean; shortId?: string; error?: string }>;
+  /** Check if a channel has an active session (Mode A or B) */
+  hasActiveSession(channelName: string): boolean;
 }
 
 export interface DiscordBotHandle {
   destroy(): void;
   /** Send a message to a Discord channel, prefixed with session short ID */
   sendReply(channelName: string, shortId: string, text: string): Promise<void>;
-  /** Post a status message (e.g., session connected/ended) */
+  /** Post a status message */
   postStatus(channelName: string, text: string): Promise<void>;
 }
 
@@ -53,7 +55,7 @@ export async function createDiscordBot(
     ],
   });
 
-  // Register slash commands
+  // Slash command: /pair (admin only)
   const pairCommand = new SlashCommandBuilder()
     .setName("pair")
     .setDescription("Pair a cc-hub client with this guild")
@@ -65,29 +67,10 @@ export async function createDiscordBot(
     )
     .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild);
 
-  const startCommand = new SlashCommandBuilder()
-    .setName("start")
-    .setDescription("Start a headless Claude Code session")
-    .addStringOption((option) =>
-      option
-        .setName("path")
-        .setDescription("Project directory path on the node-agent machine")
-        .setRequired(true),
-    )
-    .addStringOption((option) =>
-      option
-        .setName("prompt")
-        .setDescription("Initial prompt for Claude")
-        .setRequired(false),
-    );
-
   client.on("interactionCreate", async (interaction) => {
     if (!interaction.isChatInputCommand()) return;
-
     if (interaction.commandName === "pair") {
       await handlePairCommand(interaction);
-    } else if (interaction.commandName === "start") {
-      await handleStartCommand(interaction);
     }
   });
 
@@ -116,46 +99,67 @@ export async function createDiscordBot(
     }
   }
 
-  async function handleStartCommand(interaction: ChatInputCommandInteraction): Promise<void> {
-    const projectPath = interaction.options.getString("path", true);
-    const prompt = interaction.options.getString("prompt") || "You are now connected to a Discord channel. Respond to messages as they arrive.";
-
-    await interaction.deferReply();
-
-    const channelName = router.resolveChannel(projectPath);
-    const result = await events.onStartSession(channelName, projectPath, prompt);
-
-    if (result.ok) {
-      await interaction.editReply(
-        `Session **[${result.shortId}]** started for \`${projectPath}\`. Output will appear in #${channelName}.`,
-      );
-    } else {
-      await interaction.editReply(`Failed to start session: ${result.error}`);
-    }
-  }
-
-  // Handle guild messages — routing only
-  client.on("messageCreate", (message: Message) => {
+  // Handle messages — @mention to interact with sessions
+  client.on("messageCreate", async (message: Message) => {
     if (message.author.bot) return;
     if (message.channel.type !== ChannelType.GuildText) return;
 
     const channel = message.channel as TextChannel;
     const channelName = channel.name;
+
+    // Check if this is a mapped channel
     const discordId = router.getDiscordChannelId(channelName);
-    if (!discordId) return;
+
+    // Strip @mention prefix to get the actual message
+    const botId = client.user?.id;
+    const mentionRegex = botId ? new RegExp(`^<@!?${botId}>\\s*`) : null;
+    const isMention = mentionRegex ? mentionRegex.test(message.content) : false;
+    const text = mentionRegex
+      ? message.content.replace(mentionRegex, "").trim()
+      : message.content.trim();
+
+    if (!text) return;
 
     const from = message.author.displayName || message.author.username;
-    events.onUserMessage(channelName, from, message.content.trim(), message.id);
+
+    // If channel is mapped and has an active session, route the message
+    if (discordId && events.hasActiveSession(channelName)) {
+      events.onUserMessage(channelName, from, text, message.id);
+      return;
+    }
+
+    // If @mentioned and no active session, start a headless session
+    if (isMention) {
+      // Look up project path from channel mapping
+      const projectPath = getProjectPathForChannel(channelName);
+      if (!projectPath) {
+        await message.reply("No project path mapped for this channel. Use a channel created by cc-hub.");
+        return;
+      }
+
+      const result = await events.onStartHeadless(channelName, projectPath, text);
+      if (!result.ok) {
+        await message.reply(`Failed to start session: ${result.error}`);
+      }
+      // Success — stream events will appear in this channel
+      return;
+    }
+
+    // Not a mention and no active session — ignore
   });
+
+  function getProjectPathForChannel(channelName: string): string | undefined {
+    return router.getProjectPathForChannel(channelName);
+  }
 
   await client.login(token);
 
-  // Register slash commands with Discord API
+  // Register slash commands
   const rest = new REST().setToken(token);
   const appId = client.application?.id;
   if (appId) {
     await rest.put(Routes.applicationCommands(appId), {
-      body: [pairCommand.toJSON(), startCommand.toJSON()],
+      body: [pairCommand.toJSON()],
     });
   }
 
