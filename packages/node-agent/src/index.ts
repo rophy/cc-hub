@@ -10,18 +10,33 @@ const config = loadClientConfig();
 const shortId = generateShortId();
 
 async function main() {
-  const sessionManager = new SessionManager();
-
   const client = createAgentClient({
     serverUrl: config.serverUrl,
     token: config.token,
     shortId,
     hostname: hostname(),
-    onStartSession: async (projectPath, prompt) => {
-      return sessionManager.startSession(projectPath, prompt);
+    onStartSession: async (projectPath, prompt, channelName) => {
+      return sessionManager.startSession(projectPath, prompt, channelName);
     },
     onStopSession: async (sessionShortId) => {
       return sessionManager.stopSession(sessionShortId);
+    },
+    onSendMessage: async (sessionShortId, text, from) => {
+      return sessionManager.sendMessage(sessionShortId, text);
+    },
+  });
+
+  const sessionManager = new SessionManager({
+    onStreamEvent(event) {
+      client.sendStreamEvent(event);
+    },
+    onSessionEnd(sessionShortId, channelName) {
+      client.sendStreamEvent({
+        shortId: sessionShortId,
+        channelName,
+        eventType: "session_end",
+        text: "Session ended",
+      });
     },
   });
 

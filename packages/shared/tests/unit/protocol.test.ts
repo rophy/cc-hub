@@ -97,6 +97,7 @@ describe("node method schemas", () => {
     const result = NodeStartSessionParamsSchema.parse({
       projectPath: "/home/user/project",
       prompt: "work on auth",
+      channelName: "project",
     });
     expect(result.projectPath).toBe("/home/user/project");
   });

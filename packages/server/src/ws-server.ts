@@ -2,35 +2,47 @@ import { WebSocketServer, WebSocket } from "ws";
 import {
   IDENTIFY_METHOD,
   CC_REPLY_METHOD,
+  NODE_STREAM_EVENT_METHOD,
+  NODE_SEND_MESSAGE_METHOD,
   IdentifyParamsSchema,
   CcReplyParamsSchema,
+  NodeStreamEventParamsSchema,
   createResponse,
   createRequest,
   CC_MESSAGE_METHOD,
   type JsonRpcRequest,
   type JsonRpcNotification,
+  type NodeStreamEventParams,
 } from "@cc-hub/shared";
 import type { Router } from "./router.js";
 import type { AuthManager } from "./auth.js";
 
 export interface WsServerEvents {
-  /** Called when a cc-plugin sends a reply */
+  /** Called when a cc-plugin sends a reply (Mode A) */
   onCcReply(shortId: string, channelName: string, text: string, files?: string[]): void;
   /** Called when a cc-plugin connects */
   onPluginConnected(shortId: string, channelName: string): void;
   /** Called when a cc-plugin disconnects */
   onPluginDisconnected(shortId: string, channelName: string): void;
+  /** Called when a node-agent streams an event (Mode B) */
+  onStreamEvent(event: NodeStreamEventParams): void;
 }
 
 export interface WsServerHandle {
   close(): void;
-  /** Send a user message to all plugins in a channel, or a specific one */
+  /** Send a user message to all plugins in a channel, or a specific one (Mode A) */
   sendToChannel(
     channelName: string,
     from: string,
     text: string,
     messageId?: string,
     targetShortId?: string,
+  ): void;
+  /** Send a message to a node-agent managed session (Mode B) */
+  sendToNodeSession(
+    shortId: string,
+    from: string,
+    text: string,
   ): void;
 }
 
@@ -141,7 +153,7 @@ export function createWebSocketServer(
 
     if (!identified) return;
 
-    // Handle cc.reply from plugin
+    // Handle cc.reply from plugin (Mode A)
     if (msg.method === CC_REPLY_METHOD) {
       const result = CcReplyParamsSchema.safeParse(msg.params);
       if (!result.success) return;
@@ -155,6 +167,14 @@ export function createWebSocketServer(
         result.data.text,
         result.data.files,
       );
+    }
+
+    // Handle node.stream_event from node-agent (Mode B)
+    if (msg.method === NODE_STREAM_EVENT_METHOD) {
+      const result = NodeStreamEventParamsSchema.safeParse(msg.params);
+      if (!result.success) return;
+
+      events.onStreamEvent(result.data);
     }
   }
 
@@ -208,6 +228,17 @@ export function createWebSocketServer(
           ++requestIdCounter,
         );
         plugin.ws.send(JSON.stringify(msg));
+      }
+    },
+    sendToNodeSession(shortId, from, text) {
+      // Find the node-agent that manages this session and send the message
+      for (const agent of router.getNodeAgents()) {
+        const msg = createRequest(
+          NODE_SEND_MESSAGE_METHOD,
+          { shortId, text, from },
+          ++requestIdCounter,
+        );
+        agent.ws.send(JSON.stringify(msg));
       }
     },
   };

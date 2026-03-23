@@ -7,10 +7,14 @@ import {
   NODE_HEARTBEAT_METHOD,
   NODE_START_SESSION_METHOD,
   NODE_STOP_SESSION_METHOD,
+  NODE_SEND_MESSAGE_METHOD,
+  NODE_STREAM_EVENT_METHOD,
   NodeStartSessionParamsSchema,
   NodeStopSessionParamsSchema,
+  NodeSendMessageParamsSchema,
   type JsonRpcMessage,
   type JsonRpcRequest,
+  type NodeStreamEventParams,
 } from "@cc-hub/shared";
 
 export interface AgentClientOptions {
@@ -18,8 +22,17 @@ export interface AgentClientOptions {
   token: string;
   shortId: string;
   hostname: string;
-  onStartSession: (projectPath: string, prompt?: string) => Promise<{ ok: boolean; error?: string }>;
+  onStartSession: (
+    projectPath: string,
+    prompt: string,
+    channelName: string,
+  ) => Promise<{ ok: boolean; shortId?: string; error?: string }>;
   onStopSession: (shortId: string) => Promise<{ ok: boolean; error?: string }>;
+  onSendMessage: (
+    shortId: string,
+    text: string,
+    from: string,
+  ) => Promise<{ ok: boolean; error?: string }>;
 }
 
 export function createAgentClient(options: AgentClientOptions) {
@@ -89,6 +102,7 @@ export function createAgentClient(options: AgentClientOptions) {
       const result = await options.onStartSession(
         parsed.data.projectPath,
         parsed.data.prompt,
+        parsed.data.channelName,
       );
       ws?.send(JSON.stringify(createResponse(request.id, result)));
     }
@@ -109,6 +123,33 @@ export function createAgentClient(options: AgentClientOptions) {
       const result = await options.onStopSession(parsed.data.shortId);
       ws?.send(JSON.stringify(createResponse(request.id, result)));
     }
+
+    if (request.method === NODE_SEND_MESSAGE_METHOD) {
+      const parsed = NodeSendMessageParamsSchema.safeParse(request.params);
+      if (!parsed.success) {
+        ws?.send(
+          JSON.stringify(
+            createResponse(request.id, undefined, {
+              code: -1,
+              message: "Invalid params",
+            }),
+          ),
+        );
+        return;
+      }
+      const result = await options.onSendMessage(
+        parsed.data.shortId,
+        parsed.data.text,
+        parsed.data.from,
+      );
+      ws?.send(JSON.stringify(createResponse(request.id, result)));
+    }
+  }
+
+  function sendStreamEvent(event: NodeStreamEventParams): void {
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    const msg = createNotification(NODE_STREAM_EVENT_METHOD, event);
+    ws.send(JSON.stringify(msg));
   }
 
   function sendHeartbeat(activeSessions: string[]): void {
@@ -117,5 +158,5 @@ export function createAgentClient(options: AgentClientOptions) {
     ws.send(JSON.stringify(msg));
   }
 
-  return { connect, sendHeartbeat };
+  return { connect, sendStreamEvent, sendHeartbeat };
 }

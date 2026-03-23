@@ -23,6 +23,12 @@ export interface DiscordBotEvents {
     text: string,
     messageId: string,
   ): void;
+  /** Called when a user runs /start to create a headless session */
+  onStartSession(
+    channelName: string,
+    projectPath: string,
+    prompt: string,
+  ): Promise<{ ok: boolean; shortId?: string; error?: string }>;
 }
 
 export interface DiscordBotHandle {
@@ -59,11 +65,30 @@ export async function createDiscordBot(
     )
     .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild);
 
+  const startCommand = new SlashCommandBuilder()
+    .setName("start")
+    .setDescription("Start a headless Claude Code session")
+    .addStringOption((option) =>
+      option
+        .setName("path")
+        .setDescription("Project directory path on the node-agent machine")
+        .setRequired(true),
+    )
+    .addStringOption((option) =>
+      option
+        .setName("prompt")
+        .setDescription("Initial prompt for Claude")
+        .setRequired(false),
+    );
+
   client.on("interactionCreate", async (interaction) => {
     if (!interaction.isChatInputCommand()) return;
-    if (interaction.commandName !== "pair") return;
 
-    await handlePairCommand(interaction);
+    if (interaction.commandName === "pair") {
+      await handlePairCommand(interaction);
+    } else if (interaction.commandName === "start") {
+      await handleStartCommand(interaction);
+    }
   });
 
   async function handlePairCommand(interaction: ChatInputCommandInteraction): Promise<void> {
@@ -91,6 +116,24 @@ export async function createDiscordBot(
     }
   }
 
+  async function handleStartCommand(interaction: ChatInputCommandInteraction): Promise<void> {
+    const projectPath = interaction.options.getString("path", true);
+    const prompt = interaction.options.getString("prompt") || "You are now connected to a Discord channel. Respond to messages as they arrive.";
+
+    await interaction.deferReply();
+
+    const channelName = router.resolveChannel(projectPath);
+    const result = await events.onStartSession(channelName, projectPath, prompt);
+
+    if (result.ok) {
+      await interaction.editReply(
+        `Session **[${result.shortId}]** started for \`${projectPath}\`. Output will appear in #${channelName}.`,
+      );
+    } else {
+      await interaction.editReply(`Failed to start session: ${result.error}`);
+    }
+  }
+
   // Handle guild messages — routing only
   client.on("messageCreate", (message: Message) => {
     if (message.author.bot) return;
@@ -112,7 +155,7 @@ export async function createDiscordBot(
   const appId = client.application?.id;
   if (appId) {
     await rest.put(Routes.applicationCommands(appId), {
-      body: [pairCommand.toJSON()],
+      body: [pairCommand.toJSON(), startCommand.toJSON()],
     });
   }
 
