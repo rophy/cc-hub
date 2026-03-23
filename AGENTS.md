@@ -50,6 +50,12 @@ mcp__plugin_discord_discord__fetch_messages(channel="1485410147739238421", limit
 
 **Important:** The cc-hub bot only ignores its own messages (not all bots), so messages from the CC Discord bot are processed normally.
 
+**Reading bot responses:** Control plane messages (session status, errors, tool calls) are sent as Discord embeds. `fetch_messages` cannot read embed content — it only shows plain text messages (Claude Code responses). To see embed content, check the server logs:
+```bash
+docker compose logs server --tail=20
+```
+The server logs each embed via `postStatus` with the text content included.
+
 **Starting server and node-agent for testing:**
 ```bash
 docker compose up -d
