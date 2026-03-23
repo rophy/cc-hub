@@ -117,9 +117,16 @@ async function main() {
       // Prompt finished — release the channel
       if (event.eventType === "session_end") {
         busyChannels.delete(event.channelName);
-        return; // Don't post "session ended" to Discord
+        return;
       }
 
+      // Text responses from Claude — send as plain text like Mode A
+      if (event.eventType === "text" && event.text) {
+        discord.sendReply(event.channelName, event.shortId, event.text);
+        return;
+      }
+
+      // Control plane events — send as embeds
       const formatted = formatStreamEvent(event);
       if (!formatted) return;
       discord.postStatus(event.channelName, formatted.text, formatted.color);

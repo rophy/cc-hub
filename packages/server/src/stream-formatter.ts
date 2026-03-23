@@ -19,9 +19,6 @@ const COLOR_GREY = 0x888888;
 /** Format a stream event for Discord display. Returns null to skip. */
 export function formatStreamEvent(event: NodeStreamEventParams): FormattedEvent | null {
   switch (event.eventType) {
-    case "text":
-      return event.text ? { text: event.text, color: COLOR_GREY } : null;
-
     case "tool_call": {
       const input = event.toolInput || {};
       let detail = "";

@@ -28,6 +28,7 @@ services:
       - WELCOME_MSG=cc-hub node-agent
     volumes:
       - ${HOME}/.claude:/home/claude/.claude
+      - ${PROJECTS_DIR:-${HOME}/projects}:${PROJECTS_DIR:-${HOME}/projects}
     restart: unless-stopped
     depends_on:
       - server

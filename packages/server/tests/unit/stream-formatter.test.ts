@@ -12,13 +12,8 @@ function makeEvent(overrides: Partial<NodeStreamEventParams>): NodeStreamEventPa
 }
 
 describe("formatStreamEvent", () => {
-  it("returns text as-is", () => {
+  it("returns null for text events (handled separately)", () => {
     const result = formatStreamEvent(makeEvent({ eventType: "text", text: "Hello world" }));
-    expect(result?.text).toBe("Hello world");
-  });
-
-  it("returns null for empty text", () => {
-    const result = formatStreamEvent(makeEvent({ eventType: "text", text: "" }));
     expect(result).toBeNull();
   });
 

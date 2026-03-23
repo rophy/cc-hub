@@ -219,6 +219,7 @@ export async function createDiscordBot(
     },
 
     async postStatus(channelName, text, color) {
+      log.info({ channel: channelName, text }, "posting status");
       const channel = await findOrCreateChannel(channelName);
       if (!channel) return;
       const embed = new EmbedBuilder().setDescription(text).setColor(color);
