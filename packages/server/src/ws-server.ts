@@ -12,6 +12,7 @@ import {
   CC_MESSAGE_METHOD,
   type JsonRpcRequest,
   type JsonRpcNotification,
+  type JsonRpcMessage,
   type NodeStreamEventParams,
 } from "@cc-hub/shared";
 import type { Router } from "./router.js";
@@ -65,6 +66,9 @@ export function createWebSocketServer(
   const wss = new WebSocketServer({ port });
   let requestIdCounter = 0;
 
+  // Track pending node-agent requests so we can handle error responses
+  const pendingNodeRequests = new Map<number, { channelName: string }>();
+
   wss.on("connection", (ws) => {
     let identified = false;
 
@@ -96,10 +100,34 @@ export function createWebSocketServer(
 
   function handleMessage(
     ws: WebSocket,
-    msg: JsonRpcRequest | JsonRpcNotification,
+    msg: JsonRpcMessage,
     identified: boolean,
     markIdentified: () => void,
   ): void {
+    // Handle JSON-RPC responses (e.g. node-agent prompt results)
+    if (!("method" in msg) && "id" in msg) {
+      const pending = pendingNodeRequests.get(msg.id as number);
+      if (pending) {
+        pendingNodeRequests.delete(msg.id as number);
+        const result = (msg as { result?: { ok?: boolean; error?: string } }).result;
+        if (result && !result.ok && result.error) {
+          log.error({ channel: pending.channelName, error: result.error }, "node-agent prompt failed");
+          events.onStreamEvent({
+            shortId: "system",
+            channelName: pending.channelName,
+            eventType: "error",
+            text: result.error,
+          });
+          // Release the channel
+          events.onStreamEvent({
+            shortId: "system",
+            channelName: pending.channelName,
+            eventType: "session_end",
+          });
+        }
+      }
+      return;
+    }
     if (!("method" in msg)) return;
 
     // Identify must come first
@@ -271,10 +299,12 @@ export function createWebSocketServer(
 
       // Send to first available node-agent
       const agent = agents[0];
+      const id = ++requestIdCounter;
+      pendingNodeRequests.set(id, { channelName });
       const msg = createRequest(
         NODE_SEND_MESSAGE_METHOD,
         { shortId: projectPath, text, from },
-        ++requestIdCounter,
+        id,
       );
       agent.ws.send(JSON.stringify(msg));
     },
