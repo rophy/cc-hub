@@ -92,11 +92,21 @@ async function main() {
         console.log("Node-agent disconnect timeout — busy channels cleared");
       }, DISCONNECT_TIMEOUT_MS);
     },
-    onNodeAgentReconnected(_shortId) {
+    onNodeAgentReconnected(_shortId, agentBusyChannels) {
       // Cancel disconnect timeout — agent is back
       if (disconnectTimer) {
         clearTimeout(disconnectTimer);
         disconnectTimer = null;
+      }
+      // Reconcile: clear busy channels the agent no longer claims
+      for (const ch of busyChannels) {
+        if (!agentBusyChannels.includes(ch)) {
+          busyChannels.delete(ch);
+        }
+      }
+      // Add any channels the agent says are busy
+      for (const ch of agentBusyChannels) {
+        busyChannels.add(ch);
       }
     },
 

@@ -11,6 +11,10 @@ export interface SessionEvents {
 /** Tracks whether a channel is currently processing a prompt */
 const busyChannels = new Set<string>();
 
+export function getBusyChannels(): string[] {
+  return Array.from(busyChannels);
+}
+
 export class SessionManager {
   private events: SessionEvents;
 

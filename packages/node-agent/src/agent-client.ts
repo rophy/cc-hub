@@ -18,6 +18,8 @@ export interface AgentClientOptions {
   token: string;
   shortId: string;
   hostname: string;
+  /** Get list of currently busy channel names */
+  getBusyChannels: () => string[];
   onRunPrompt: (
     projectPath: string,
     prompt: string,
@@ -44,6 +46,7 @@ export function createAgentClient(options: AgentClientOptions) {
             token: options.token,
             shortId: options.shortId,
             hostname: options.hostname,
+            busyChannels: options.getBusyChannels(),
           },
           nextId(),
         );

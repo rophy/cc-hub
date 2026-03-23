@@ -14,6 +14,8 @@ export const IdentifyParamsSchema = z.object({
   projectPath: z.string().optional(),
   /** Hostname of the connecting machine */
   hostname: z.string().optional(),
+  /** Currently busy channels (node-agent only, for reconnect state sync) */
+  busyChannels: z.array(z.string()).optional(),
 });
 
 export type IdentifyParams = z.infer<typeof IdentifyParamsSchema>;

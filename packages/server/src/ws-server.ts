@@ -28,8 +28,8 @@ export interface WsServerEvents {
   onPluginDisconnected(shortId: string, channelName: string): void;
   /** Called when a node-agent disconnects */
   onNodeAgentDisconnected(shortId: string): void;
-  /** Called when a node-agent reconnects */
-  onNodeAgentReconnected(shortId: string): void;
+  /** Called when a node-agent reconnects, with its current busy channels */
+  onNodeAgentReconnected(shortId: string, agentBusyChannels: string[]): void;
   /** Called when a node-agent streams an event (Mode B) */
   onStreamEvent(event: NodeStreamEventParams): void;
 }
@@ -193,7 +193,7 @@ export function createWebSocketServer(
 
   function registerClient(
     ws: WebSocket,
-    params: { clientType: string; shortId: string; projectPath?: string; hostname?: string },
+    params: { clientType: string; shortId: string; projectPath?: string; hostname?: string; busyChannels?: string[] },
     markIdentified: () => void,
   ): void {
     if (params.clientType === "cc-plugin") {
@@ -231,7 +231,7 @@ export function createWebSocketServer(
         shortId: params.shortId,
         hostname: params.hostname,
       });
-      events.onNodeAgentReconnected(params.shortId);
+      events.onNodeAgentReconnected(params.shortId, params.busyChannels || []);
       ws.send(
         JSON.stringify(
           createRequest("auth.identified", { ok: true }, ++requestIdCounter),

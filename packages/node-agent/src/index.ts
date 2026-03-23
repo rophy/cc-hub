@@ -2,7 +2,7 @@
 
 import { loadClientConfig } from "@cc-hub/shared";
 import { createAgentClient } from "./agent-client.js";
-import { SessionManager } from "./session-manager.js";
+import { SessionManager, getBusyChannels } from "./session-manager.js";
 import { generateShortId } from "./utils.js";
 import { hostname } from "node:os";
 
@@ -15,6 +15,7 @@ async function main() {
     token: config.token,
     shortId,
     hostname: hostname(),
+    getBusyChannels,
     onRunPrompt: async (projectPath, prompt) => {
       const { basename } = await import("node:path");
       const channelName = basename(projectPath);
