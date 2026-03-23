@@ -8,13 +8,16 @@ Claude Code is a powerful CLI tool, but interacting with it requires terminal ac
 
 ## Approach
 
-Use messaging platforms (Discord, Slack) as the UI layer, and Claude Code Channels as the interface to CC sessions. A central server routes messages between platform channels and CC sessions across one or more machines.
+Use messaging platforms (Discord, Slack) as the UI layer for Claude Code sessions. cc-hub supports two modes:
+
+- **Mode A (terminal-driven)**: User starts CC in a terminal with the cc-hub channel plugin. Discord acts as a side channel for messaging.
+- **Mode B (Discord-driven)**: User @mentions the bot in Discord. CC runs in headless mode with full output streamed to Discord.
 
 ## Components
 
-- **server** — Central API that connects messaging platforms to CC sessions
-- **cc-plugin** — Claude Code channel plugin that relays messages to/from the server
-- **node-agent** — Optional agent for remotely launching and managing CC sessions
+- **server** — Central API that connects Discord to CC sessions
+- **cc-plugin** — Claude Code channel plugin for Mode A (terminal-driven)
+- **node-agent** — Headless CC executor for Mode B (Discord-driven)
 
 See [docs/design.md](docs/design.md) for architecture details.
 
@@ -53,7 +56,19 @@ docker build -t cc-hub-server .
 docker run -e DISCORD_TOKEN=<your-bot-token> -p 3000:3000 cc-hub-server
 ```
 
-### 3. Configure the CC Plugin
+### 3. Pairing
+
+On first connection from a cc-plugin or node-agent, the terminal shows a pairing code:
+
+```
+[cc-hub] Pairing required. DM the bot or run in Discord:
+  /pair A3F7
+Waiting for approval...
+```
+
+A guild admin runs `/pair A3F7` in any Discord channel to approve. The token is saved to `~/.cc-hub/config.json` for future connections.
+
+### 4. Mode A: Terminal-driven
 
 Add the cc-hub MCP server to your Claude Code config (`~/.claude.json`):
 
@@ -68,31 +83,34 @@ Add the cc-hub MCP server to your Claude Code config (`~/.claude.json`):
 }
 ```
 
-### 4. Start a Claude Code Session
+Start a CC session with the channel plugin:
 
 ```bash
 claude --dangerously-load-development-channels server:cc-hub
 ```
 
-On first connection, your terminal will show a pairing code:
+The server creates a Discord channel named after your project directory. @mention the bot in that channel to send messages to Claude.
+
+### 5. Mode B: Discord-driven (headless)
+
+Start the node-agent on a machine with Claude Code installed:
+
+```bash
+node packages/node-agent/dist/index.js
+```
+
+Then @mention the bot in any mapped Discord channel:
 
 ```
-[cc-hub] Pairing required. Ask someone to run in Discord:
-  !pair A3F7
-Waiting for approval...
+@cc-hub fix the auth bug
 ```
 
-A guild admin runs `/pair A3F7` in any Discord channel to approve. The token is saved to `~/.cc-hub/config.json` for future connections.
+The node-agent runs `claude -p "fix the auth bug" --continue` in headless mode. All output (text, tool calls, results) is streamed to the Discord channel. Follow-up @mentions continue the same conversation via `--continue`.
 
-### 5. Chat
+### Interaction Rules
 
-Send messages in the Discord channel that was created (named after your project directory). Claude receives them and replies through the same channel.
-
-To target a specific session when multiple are active:
-
-```
-@a3f7 what about the tests?
-```
+- **@mention required** — all messages to the bot require @mention
+- **Single session per channel** — only one CC session (Mode A or B) can be active per channel at a time
 
 ## Status
 

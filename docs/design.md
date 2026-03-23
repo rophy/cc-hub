@@ -74,19 +74,22 @@ All Discord interaction requires @mention. No slash commands for messaging (only
 ```
                           ┌─────────────────┐
                           │     Server       │
-Discord/Slack ←──────────→│  (API + routing) │
+Discord ←────────────────→│  (API + routing) │
                           └───────┬─────────┘
                                   │ WebSocket
-                    ┌─────────────┼─────────────┐
-                    │             │              │
-              ┌─────┴──────┐ ┌───┴────┐   ┌─────┴──────┐
-              │ cc-plugin   │ │cc-plugin│   │ node-agent │
-              │ (Mode A)    │ │(Mode A)│   │ (Mode B)   │
-              └─────┬──────┘ └───┬────┘   └────────────┘
-                    │            │
-              CC Session 1  CC Session 2       Machine B
-                   Machine A
+                          ┌───────┼───────┐
+                          │               │
+                    ┌─────┴──────┐  ┌─────┴──────┐
+                    │ cc-plugin   │  │ node-agent │
+                    │ (Mode A)    │  │ (Mode B)   │
+                    └─────┬──────┘  └─────┬──────┘
+                          │               │
+                    CC Session        claude -p
+                    (interactive)     (headless)
+                     Machine A        Machine B
 ```
+
+Each Discord channel maps to one project path. Only one session (Mode A or Mode B) can be active per channel.
 
 ### server
 
@@ -268,12 +271,9 @@ A machine running both a node-agent and CC sessions pairs once. The node-agent's
 
 ### Platform User Authorization
 
-Discord/Slack handle user identity — the server trusts the platform's user ID. Authorization determines which platform users can interact with which CC sessions.
+Any user who can see a Discord channel can @mention the bot and interact with CC sessions in that channel. Access is controlled entirely by Discord's native channel permissions.
 
-Options (configurable per deployment):
-- **Allowlist** — explicit list of Discord user IDs allowed to interact
-- **Role-based** — anyone with a specific Discord role gets access
-- **Open** — anyone in the Discord server can use it
+Future enhancement: allowlist or role-based authorization for finer control.
 
 ## Channel Mapping
 
@@ -349,7 +349,7 @@ No message buffering. If a cc-plugin or node-agent is disconnected, messages sen
 | Headless prompt finishes (Mode B) | Process exits. Node-agent sends session_end. Channel freed. |
 | Network blip | Plugin/agent auto-reconnects (5s delay). |
 | Server restarts | All connections drop. Clients reconnect. Server reloads state from JSON file. |
-| Node-agent disconnects | Pending prompts fail. Busy channels freed. |
+| Node-agent disconnects | Pending prompts fail. Busy channels may remain stuck until server restart (known limitation). |
 
 ## Access Control
 
