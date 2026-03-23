@@ -1,0 +1,33 @@
+services:
+  server:
+    build:
+      context: .
+      dockerfile: packages/server/Dockerfile
+    ports:
+      - "3000:3000"
+    user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
+    environment:
+      - HOME=/home/cc-hub
+      - DISCORD_TOKEN=${DISCORD_TOKEN}
+      - CC_HUB_WS_PORT=3000
+    volumes:
+      - ${HOME}/.cc-hub:/home/cc-hub/.cc-hub
+    restart: unless-stopped
+
+  node-agent:
+    build:
+      context: .
+      dockerfile: packages/node-agent/Dockerfile
+      args:
+        BASE_IMAGE: ${CLAUDE_IMAGE:-ghcr.io/rophy/containers/claude:20260323-bc35380}
+    environment:
+      - HOST_UID=${HOST_UID:-1000}
+      - HOST_GID=${HOST_GID:-1000}
+      - CC_HUB_SERVER_URL=ws://server:3000
+      - CC_HUB_TOKEN=${CC_HUB_TOKEN}
+      - WELCOME_MSG=cc-hub node-agent
+    volumes:
+      - ${HOME}/.claude:/home/claude/.claude
+    restart: unless-stopped
+    depends_on:
+      - server

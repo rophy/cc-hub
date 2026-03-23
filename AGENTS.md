@@ -28,9 +28,9 @@ npm run test:e2e           # full flow (not yet implemented)
 
 Always redirect test output to a temp file before grepping.
 
-### Discord E2E Testing
+### Discord Manual Testing
 
-The CC Discord plugin can be used for e2e testing against a live cc-hub server. Both the CC Discord bot and cc-hub bot must be in the same guild.
+The CC Discord plugin can be used for manual testing against a live cc-hub server. Both the CC Discord bot and cc-hub bot must be in the same guild.
 
 **Prerequisites:**
 - cc-hub server running (reads token from `~/.cc-hub/config.json`)
@@ -52,11 +52,8 @@ mcp__plugin_discord_discord__fetch_messages(channel="1485410147739238421", limit
 
 **Starting server and node-agent for testing:**
 ```bash
-# Server (reads discordToken from ~/.cc-hub/config.json)
-node packages/server/dist/index.js &
-
-# Node-agent
-node packages/node-agent/dist/index.js &
+docker compose up -d
+docker compose logs -f
 ```
 
 ## Key Conventions
@@ -70,9 +67,38 @@ node packages/node-agent/dist/index.js &
 - Single session per Discord channel (Mode A or Mode B, not both)
 - All Discord interactions require @mention
 
-## Docker
+## Deploy
+
+Uses `docker compose` with two services:
+
+- **server** — built from `packages/server/Dockerfile` (node:22-slim)
+- **node-agent** — built from `packages/node-agent/Dockerfile` (ghcr.io/rophy/containers/claude, includes claude CLI)
+
+The server mounts `~/.cc-hub` for state and config. The node-agent mounts `~/.claude` for Claude Code credentials and session data.
+
+### Setup
+
+1. Copy `.env.example` to `.env` and fill in:
+   - `DISCORD_TOKEN` — Discord bot token
+   - `CC_HUB_TOKEN` — shared auth token (from `~/.cc-hub/config.json` `token` field)
+
+2. Start:
+   ```bash
+   docker compose up -d
+   ```
+
+3. View logs:
+   ```bash
+   docker compose logs -f
+   ```
+
+4. Stop:
+   ```bash
+   docker compose down
+   ```
+
+### Rebuild after code changes
 
 ```bash
-docker build -t cc-hub-server .
-docker run -e DISCORD_TOKEN=... cc-hub-server
+docker compose up -d --build
 ```
