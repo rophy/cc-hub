@@ -118,18 +118,20 @@ export async function createDiscordBot(
       ? message.content.replace(mentionRegex, "").trim()
       : message.content.trim();
 
+    // Require @mention for all interactions
+    if (!isMention) return;
     if (!text) return;
 
     const from = message.author.displayName || message.author.username;
 
-    // If channel is mapped and has an active session, route the message
+    // If channel has an active session, route the message
     if (discordId && events.hasActiveSession(channelName)) {
       events.onUserMessage(channelName, from, text, message.id);
       return;
     }
 
-    // If @mentioned and no active session, start a headless session
-    if (isMention) {
+    // No active session — start headless Mode B
+    {
       // Look up project path from channel mapping
       const projectPath = getProjectPathForChannel(channelName);
       if (!projectPath) {

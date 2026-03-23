@@ -63,11 +63,11 @@ Only one session (Mode A or Mode B) can be active in a channel at a time.
 
 ### @mention
 
-All Discord interaction uses @mention. No slash commands for messaging (only `/pair` for admin pairing).
+All Discord interaction requires @mention. No slash commands for messaging (only `/pair` for admin pairing).
 
 - **@mention in a mapped channel with an active session** → message routes to the active session (Mode A or Mode B)
 - **@mention in a mapped channel with no active session** → starts a Mode B headless prompt using `--continue` in the channel's project directory
-- **Messages without @mention** → ignored (unless Mode A session is active, then all messages in mapped channels route)
+- **Messages without @mention** → ignored
 
 ## Components
 
@@ -379,4 +379,4 @@ Simplicity. Multiple concurrent sessions in one channel would require message ta
 
 ### Why @mention instead of slash commands?
 
-@mention is the natural Discord interaction model for bot conversations. Slash commands are used for administrative actions (`/pair`). Messages in mapped channels with active Mode A sessions route automatically without @mention — the bot acts as a transparent relay.
+@mention is the natural Discord interaction model for bot conversations. Slash commands are used for administrative actions (`/pair`). Requiring @mention for all messages (both modes) keeps the rule simple and consistent — no special cases.
