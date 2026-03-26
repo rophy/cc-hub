@@ -20,18 +20,18 @@ services:
       dockerfile: packages/node-agent/Dockerfile
       args:
         BASE_IMAGE: ${CLAUDE_IMAGE:-ghcr.io/rophy/containers/claude:20260323-bc35380}
+    network_mode: host
     environment:
       - HOST_UID=${HOST_UID:-1000}
       - HOST_GID=${HOST_GID:-1000}
       - DOCKER_GID=${DOCKER_GID:-999}
-      - CC_HUB_SERVER_URL=ws://server:3000
+      - HOME=${HOME}
+      - CC_HUB_SERVER_URL=ws://localhost:3000
       - CC_HUB_TOKEN=${CC_HUB_TOKEN}
       - WELCOME_MSG=cc-hub node-agent
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
-      - ${HOME}/.claude:/home/claude/.claude
-      - ${HOME}/.kube:/home/claude/.kube:ro
-      - ${PROJECTS_DIR:-${HOME}/projects}:${PROJECTS_DIR:-${HOME}/projects}
+      - ${HOME}:${HOME}
     restart: unless-stopped
     depends_on:
       - server
