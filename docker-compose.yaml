@@ -23,10 +23,12 @@ services:
     environment:
       - HOST_UID=${HOST_UID:-1000}
       - HOST_GID=${HOST_GID:-1000}
+      - DOCKER_GID=${DOCKER_GID:-999}
       - CC_HUB_SERVER_URL=ws://server:3000
       - CC_HUB_TOKEN=${CC_HUB_TOKEN}
       - WELCOME_MSG=cc-hub node-agent
     volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
       - ${HOME}/.claude:/home/claude/.claude
       - ${PROJECTS_DIR:-${HOME}/projects}:${PROJECTS_DIR:-${HOME}/projects}
     restart: unless-stopped
