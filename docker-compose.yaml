@@ -30,6 +30,7 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - ${HOME}/.claude:/home/claude/.claude
+      - ${HOME}/.kube:/home/claude/.kube:ro
       - ${PROJECTS_DIR:-${HOME}/projects}:${PROJECTS_DIR:-${HOME}/projects}
     restart: unless-stopped
     depends_on:
